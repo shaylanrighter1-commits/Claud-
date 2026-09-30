@@ -188,3 +188,11 @@ test('deal scorecard: verdict follows the owner criteria', () => {
   const lax = F.evaluate(F.analyze({}).metrics, { minCap: 1, minDscr: 0.5, minCoc: -50, minIrr: -50 });
   assert.equal(lax.verdict, 'Good deal');
 });
+
+test('login still works when the browser holds an existing session cookie (no CSRF token on login form)', async () => {
+  const c = new Client();
+  assert.equal((await c.login('owner@x.com', PW)).status, 200);
+  c.csrf = '';                                       // login form never sends a CSRF token
+  assert.equal((await c.req('POST', '/portal/api/auth/login', { email: 'owner@x.com', password: PW })).status, 200);
+  assert.equal((await c.req('POST', '/portal/api/records/plan', { title: 'x' })).status, 403); // other writes still need the token
+});

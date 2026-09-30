@@ -68,7 +68,8 @@ const requireRole = (min) => (req, res, next) => {
 };
 // CSRF layer 2: per-session synchroniser token required on every state-changing request.
 function csrf(req, res, next) {
-  if (['GET', 'HEAD', 'OPTIONS'].includes(req.method) || !req.session) return next();
+  // Login itself is protected by the Origin check + credentials; a stale cookie must not block signing in again.
+  if (['GET', 'HEAD', 'OPTIONS'].includes(req.method) || !req.session || req.path === '/auth/login') return next();
   if (!C.safeEqual(req.get('x-csrf-token') || '', req.session.csrf)) return res.status(403).json({ error: 'Bad CSRF token' });
   next();
 }
