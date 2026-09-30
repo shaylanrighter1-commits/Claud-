@@ -69,15 +69,18 @@ views.plan = async () => {
   const secs = (await api('/records/plan')).sort((a, b) => (a.order ?? a.id) - (b.order ?? b.id));
   main.append(h('h2', {}, 'Business plan'), h('p', { class: 'conf' }, 'Confidential — encrypted at rest'));
   if (can('analyst')) {
-    const file = h('input', { type: 'file' });
-    const imp = h('button', { class: 'sec', onclick: guard(async () => {
-      const f = file.files[0]; if (!f) throw new Error('Choose a .md or .txt file');
-      const text = await f.text(); const parts = text.split(/^(?=#{1,3}\s)/m).filter((t) => t.trim());
+    const importText = async (text) => {
+      const parts = text.split(/^(?=#{1,3}\s)/m).filter((t) => t.trim());
+      if (!parts.length) throw new Error('Nothing to import');
       let i = secs.length;
       for (const p of parts) { const m = p.match(/^#{1,3}\s+(.*)\n?/); await api('/records/plan', 'POST', { title: m ? m[1].trim() : 'Untitled', body: m ? p.slice(m[0].length).trim() : p.trim(), order: i++ }); }
-      router(); setTimeout(() => toast(`Imported ${parts.length} sections`), 300);
-    }) }, 'Import');
-    main.append(h('div', { class: 'panel' }, h('b', {}, 'Import plan text'), h('p', { class: 'muted' }, 'Markdown/plain text is split into sections at headings. For PDF/Word originals, use Documents (stored encrypted).'), h('div', { class: 'row' }, file, imp, h('button', { onclick: () => editPlan() }, 'New section'))));
+      await router(); toast(`Imported ${parts.length} sections`);
+    };
+    const file = h('input', { type: 'file' });
+    const paste = h('textarea', { placeholder: 'Paste your plan here. Lines starting with # become section titles.' });
+    main.append(h('div', { class: 'panel' }, h('b', {}, 'Import plan text'), h('p', { class: 'muted' }, 'Paste text below (easiest), or choose a .md/.txt file. Text is split into sections at headings. For PDF/Word originals, use Documents (stored encrypted).'),
+      paste, h('div', { class: 'row' }, h('button', { onclick: guard(() => importText(paste.value)) }, 'Import pasted text'), h('button', { class: 'sec', onclick: () => editPlan() }, 'New section')),
+      h('div', { class: 'row' }, file, h('button', { class: 'sec', onclick: guard(async () => { const f = file.files[0]; if (!f) throw new Error('Choose a file first'); await importText(await f.text()); }) }, 'Import file'))));
   }
   for (const s of secs) main.append(h('div', { class: 'panel' }, h('h3', {}, s.title), h('div', { class: 'pre' }, s.body), can('analyst') && h('div', { class: 'row noprint' }, h('button', { class: 'sec', onclick: () => editPlan(s) }, 'Edit'), can('owner') && h('button', { class: 'danger', onclick: guard(async () => { if (confirm('Delete this section?')) { await api('/records/plan/' + s.id, 'DELETE'); router(); } }) }, 'Delete'))));
   if (!secs.length) main.append(h('p', { class: 'muted' }, 'No sections yet.'));
