@@ -23,3 +23,10 @@ Both are stored AES-256-GCM encrypted. See `docs/SECURITY.md`.
 
 ## Production
 See `docs/SECURITY.md` → *Deployment checklist*. Run `SERVE_MODE=public` and `SERVE_MODE=portal` as **separate processes/hosts**.
+
+## Forgot your password?
+From the project folder on the machine running the site (this keeps all data):
+```bash
+USER_EMAIL=you@example.com npm run reset-password           # prompts for the new password
+USER_EMAIL=you@example.com RESET_2FA=1 npm run reset-password  # also clears 2FA if you lost your phone
+```
