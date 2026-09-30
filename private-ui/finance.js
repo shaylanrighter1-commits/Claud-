@@ -104,5 +104,20 @@
     return { rows, equity, loan: results.reduce((s, r) => s + r.loan, 0), price: results.reduce((s, r) => s + r.inputs.purchasePrice, 0), irr: irr(flows), flows,
       multiple: equity ? flows.slice(1).reduce((a, b) => a + b, 0) / equity : null };
   }
-  return { DEFAULTS, analyze, maxPrice, portfolio, irr, monthlyPayment };
+  // Deal scorecard: transparent rules (no outside services). Percent criteria are in percent units.
+  const DEFAULT_CRITERIA = { minCap: 6.5, minDscr: 1.25, minCoc: 6, minIrr: 14 };
+  function evaluate(m, criteria) {
+    const c = Object.assign({}, DEFAULT_CRITERIA, criteria || {});
+    const checks = [
+      { name: 'Cap rate', value: m.capRate * 100, target: c.minCap, unit: '%', ok: m.capRate * 100 >= c.minCap },
+      { name: 'Debt coverage (DSCR)', value: m.dscr, target: c.minDscr, unit: 'x', ok: m.dscr !== null && m.dscr >= c.minDscr },
+      { name: 'Cash-on-cash (Yr 1)', value: m.cashOnCash * 100, target: c.minCoc, unit: '%', ok: m.cashOnCash * 100 >= c.minCoc },
+      { name: 'IRR', value: m.irr === null ? null : m.irr * 100, target: c.minIrr, unit: '%', ok: m.irr !== null && m.irr * 100 >= c.minIrr }
+    ];
+    const passed = checks.filter((x) => x.ok).length;
+    let verdict = 'Good deal';
+    if (passed < checks.length) verdict = (m.dscr !== null && m.dscr < 1) || passed <= 1 ? 'Not a good deal' : 'Borderline';
+    return { verdict, passed, total: checks.length, checks };
+  }
+  return { DEFAULTS, DEFAULT_CRITERIA, analyze, maxPrice, portfolio, irr, monthlyPayment, evaluate };
 });

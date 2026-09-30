@@ -41,6 +41,19 @@ function download(name, text, type = 'text/csv') {
 }
 const csvCell = (v) => { v = String(v ?? ''); return /^[=+\-@\t\r]/.test(v) ? `"'${v.replace(/"/g, '""')}"` : /[",\n]/.test(v) ? `"${v.replace(/"/g, '""')}"` : v; }; // neutralise spreadsheet formulas
 
+async function getCriteria() {
+  const r = (await api('/records/assumption')).find((x) => x.type === 'criteria');
+  return { ...F.DEFAULT_CRITERIA, ...(r ? { minCap: r.minCap, minDscr: r.minDscr, minCoc: r.minCoc, minIrr: r.minIrr } : {}), _id: r ? r.id : null };
+}
+const fmtCheck = (c) => (c.value === null ? '—' : c.unit === 'x' ? c.value.toFixed(2) + 'x' : c.value.toFixed(1) + '%');
+const verdictClass = (v) => (v === 'Good deal' ? 'v-good' : v === 'Borderline' ? 'v-mid' : 'v-bad');
+const verdictIcon = (v) => (v === 'Good deal' ? '✓ ' : v === 'Borderline' ? '~ ' : '✗ ');
+function verdictBanner(ev) {
+  return h('div', { class: 'panel verdict ' + verdictClass(ev.verdict) },
+    h('b', {}, verdictIcon(ev.verdict) + ev.verdict), h('span', { class: 'muted' }, ` — meets ${ev.passed} of ${ev.total} of your targets`),
+    table([{ label: 'Test' }, { label: 'This deal', num: 1 }, { label: 'Your target', num: 1 }, { label: '' }].map((c, i) => ({ ...c, render: (r) => r[i] })),
+      ev.checks.map((c) => [c.name, fmtCheck(c), '≥ ' + (c.unit === 'x' ? c.target.toFixed(2) + 'x' : c.target + '%'), c.ok ? '✓ pass' : '✗ short'])));
+}
 const STAGES = ['Sourcing', 'Screening', 'Underwriting', 'Offer', 'Under contract', 'Closed', 'Passed'];
 const main = document.getElementById('main');
 
@@ -102,13 +115,14 @@ const UW_GROUPS = [
 const uwInputs = (f) => Object.fromEntries(Object.keys(F.DEFAULTS).map((k) => [k, +f.elements[k].value]));
 
 views.properties = async () => {
-  const props = await api('/records/property');
+  const [props, crit] = [await api('/records/property'), await getCriteria()];
   main.append(h('h2', {}, 'Properties & opportunities'), h('p', { class: 'conf' }, 'Confidential — proprietary pipeline'), can('analyst') && h('div', { class: 'row' }, h('button', { onclick: () => editProperty() }, 'Add property')));
   main.append(table([
     { label: 'Name', render: (p) => h('a', { href: '#', onclick: (e) => { e.preventDefault(); editProperty(p); } }, p.name) }, { label: 'Stage', key: 'stage' }, { label: 'Address', key: 'address' },
     { label: 'Asking', num: 1, render: (p) => usd(p.askingPrice) }, { label: 'Target price', num: 1, render: (p) => usd(p.targetPrice) },
     { label: 'Cap @ target', num: 1, render: (p) => (p.uw ? pct(F.analyze({ ...p.uw, purchasePrice: p.targetPrice || p.uw.purchasePrice }).metrics.capRate, 2) : '—') },
-    { label: 'IRR', num: 1, render: (p) => (p.uw ? pct(F.analyze(p.uw).metrics.irr) : '—') }], props));
+    { label: 'IRR', num: 1, render: (p) => (p.uw ? pct(F.analyze(p.uw).metrics.irr) : '—') },
+    { label: 'Verdict', render: (p) => (p.uw ? h('span', { class: 'tag ' + verdictClass(F.evaluate(F.analyze(p.uw).metrics, crit).verdict) }, verdictIcon(F.evaluate(F.analyze(p.uw).metrics, crit).verdict) + F.evaluate(F.analyze(p.uw).metrics, crit).verdict) : '—') }], props));
   if (!props.length) main.append(h('p', { class: 'muted' }, 'No properties yet.'));
 };
 function editProperty(p = {}) {
@@ -133,12 +147,15 @@ function editProperty(p = {}) {
 views.calc = async () => {
   let start = {}; try { start = JSON.parse(sessionStorage.getItem('calc') || '{}'); } catch { /* ignore */ }
   const uw = { ...F.DEFAULTS, ...start };
+  let crit = await getCriteria();
+  const vbox = h('div', {});
   const out = h('div', {});
   const f = h('form', { class: 'noprint' }, UW_GROUPS.map(([t, fields]) => h('div', { class: 'panel' }, h('b', {}, t), h('div', { class: 'fields' }, Object.entries(fields).map(([k, l]) => input(l, k, uw[k], 'number'))))));
   const draw = () => {
     const inputs = uwInputs(f), r = F.analyze(inputs), m = r.metrics;
     sessionStorage.setItem('calc', JSON.stringify(inputs));
     const solve = (metric, target) => F.maxPrice(inputs, metric, target);
+    vbox.replaceChildren(verdictBanner(F.evaluate(m, crit)));
     out.replaceChildren(
       h('div', { class: 'cards' }, kpi('NOI (Yr 1)', usd(m.noi)), kpi('Cap rate', pct(m.capRate, 2)), kpi('DSCR', x2(m.dscr)), kpi('Debt yield', pct(m.debtYield)), kpi('Cash-on-cash (Yr 1)', pct(m.cashOnCash)),
         kpi('Equity required', usd(r.equity)), kpi('Loan', usd(r.loan)), kpi('Price / unit', usd(m.pricePerUnit)), kpi('All-in / unit', usd(m.allInBasis)), kpi('Break-even occ.', pct(m.breakevenOccupancy)),
@@ -150,18 +167,25 @@ views.calc = async () => {
   f.addEventListener('input', draw);
   const save = can('analyst') && h('div', { class: 'row noprint' }, h('button', { onclick: guard(async () => { const name = prompt('Property name to save this underwriting as:'); if (!name) return; await api('/records/property', 'POST', { name, stage: 'Underwriting', uw: uwInputs(f) }); toast('Saved to Properties'); }) }, 'Save as property'),
     h('button', { class: 'sec', onclick: () => { sessionStorage.removeItem('calc'); router(); } }, 'Reset'));
-  main.append(h('h2', {}, 'Advanced calculator'), h('p', { class: 'conf' }, 'Proprietary underwriting model'), save, f, out); draw();
+  const cf = h('form', { class: 'panel noprint' }, h('b', {}, 'Your deal targets (used for the Good / Borderline / Not good verdict)'),
+    h('div', { class: 'fields' }, input('Min cap rate (%)', 'minCap', crit.minCap, 'number'), input('Min DSCR (x)', 'minDscr', crit.minDscr, 'number'), input('Min cash-on-cash (%)', 'minCoc', crit.minCoc, 'number'), input('Min IRR (%)', 'minIrr', crit.minIrr, 'number')),
+    can('analyst') && h('button', {}, 'Save my targets'));
+  cf.addEventListener('input', () => { for (const k of ['minCap', 'minDscr', 'minCoc', 'minIrr']) if (cf.elements[k].value !== '') crit[k] = +cf.elements[k].value; draw(); });
+  cf.onsubmit = guard(async (e) => { e.preventDefault(); const b = { type: 'criteria', minCap: crit.minCap, minDscr: crit.minDscr, minCoc: crit.minCoc, minIrr: crit.minIrr };
+    crit._id ? await api('/records/assumption/' + crit._id, 'PUT', b) : (crit._id = (await api('/records/assumption', 'POST', b)).id); toast('Targets saved'); });
+  main.append(h('h2', {}, 'Advanced calculator'), h('p', { class: 'conf' }, 'Proprietary underwriting model'), save, vbox, cf, f, out); draw();
 };
 
 views.compare = async () => {
   const props = (await api('/records/property')).filter((p) => p.uw);
+  const crit = await getCriteria();
   const box = h('div', {});
   const picks = props.map((p) => h('label', { class: 'row' }, h('input', { type: 'checkbox', value: p.id, onchange: draw }), p.name));
   function draw() {
     const sel = props.filter((p) => picks.some((c) => c.firstChild.checked && +c.firstChild.value === p.id));
     if (sel.length < 2) return box.replaceChildren(h('p', { class: 'muted' }, 'Select two or more properties.'));
     const res = sel.map((p) => ({ p, r: F.analyze(p.uw) }));
-    const rows = [['Stage', (x) => x.p.stage], ['Purchase price', (x) => usd(x.r.inputs.purchasePrice)], ['Units', (x) => $(x.r.inputs.units)], ['Price / unit', (x) => usd(x.r.metrics.pricePerUnit)], ['NOI (Yr 1)', (x) => usd(x.r.metrics.noi)],
+    const rows = [['Verdict', (x) => F.evaluate(x.r.metrics, crit).verdict], ['Stage', (x) => x.p.stage], ['Purchase price', (x) => usd(x.r.inputs.purchasePrice)], ['Units', (x) => $(x.r.inputs.units)], ['Price / unit', (x) => usd(x.r.metrics.pricePerUnit)], ['NOI (Yr 1)', (x) => usd(x.r.metrics.noi)],
       ['Cap rate', (x) => pct(x.r.metrics.capRate, 2)], ['DSCR', (x) => x2(x.r.metrics.dscr)], ['Cash-on-cash', (x) => pct(x.r.metrics.cashOnCash)], ['Equity required', (x) => usd(x.r.equity)],
       ['IRR', (x) => pct(x.r.metrics.irr)], ['Equity multiple', (x) => x2(x.r.metrics.equityMultiple)], ['Break-even occupancy', (x) => pct(x.r.metrics.breakevenOccupancy)], ['Expense ratio', (x) => pct(x.r.metrics.expenseRatio)]];
     box.replaceChildren(table([{ label: 'Metric', key: 0 }, ...res.map((x, i) => ({ label: x.p.name, num: 1, render: (r) => r[i + 1] }))], rows.map(([l, fn]) => [l, ...res.map(fn)])));

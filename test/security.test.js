@@ -178,3 +178,13 @@ test('finance engine sanity', () => {
   const p = F.maxPrice({}, 'dscr', 1.25);
   assert.ok(Math.abs(F.analyze({ purchasePrice: p }).metrics.dscr - 1.25) < 0.001);
 });
+
+test('deal scorecard: verdict follows the owner criteria', () => {
+  const F = require('../private-ui/finance.js');
+  const weak = F.evaluate(F.analyze({ units: 12, avgRent: 950, otherIncome: 25, purchasePrice: 1350000, capex: 60000, taxes: 16800, insurance: 8400, utilities: 10800, repairs: 12000, payroll: 0, admin: 4800, mgmtPct: 6, ltvPct: 65, ratePct: 6.75, exitCapPct: 6.5 }).metrics);
+  assert.equal(weak.verdict, 'Not a good deal');
+  const strong = F.evaluate(F.analyze({ units: 12, avgRent: 1500, otherIncome: 25, purchasePrice: 1350000, capex: 60000, taxes: 16800, insurance: 8400, utilities: 10800, repairs: 12000, payroll: 0, admin: 4800, mgmtPct: 6, ltvPct: 65, ratePct: 6.75, exitCapPct: 6.5 }).metrics);
+  assert.equal(strong.verdict, 'Good deal');
+  const lax = F.evaluate(F.analyze({}).metrics, { minCap: 1, minDscr: 0.5, minCoc: -50, minIrr: -50 });
+  assert.equal(lax.verdict, 'Good deal');
+});
