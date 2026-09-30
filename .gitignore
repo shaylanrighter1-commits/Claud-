@@ -1,0 +1,14 @@
+node_modules/
+.env
+.env.*
+data/
+*.db
+*.db-wal
+*.db-shm
+*.key
+# Confidential material must never be committed
+confidential/
+*.pdf
+*.docx
+*.xlsx
+*.pptx

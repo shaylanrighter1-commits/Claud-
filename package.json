@@ -1,0 +1,16 @@
+{
+  "name": "multifamily-platform",
+  "version": "1.0.0",
+  "private": true,
+  "description": "Public multifamily investment website + private, encrypted owner dashboard",
+  "engines": { "node": ">=22.13" },
+  "scripts": {
+    "start": "node server/index.js",
+    "start:public": "SERVE_MODE=public node server/index.js",
+    "start:portal": "SERVE_MODE=portal node server/index.js",
+    "create-owner": "node scripts/create-owner.js",
+    "gen-keys": "node scripts/gen-keys.js",
+    "test": "node --test test/*.test.js"
+  },
+  "dependencies": { "express": "^4.21.2" }
+}

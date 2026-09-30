@@ -1,0 +1,9 @@
+<!doctype html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<meta name="robots" content="noindex,nofollow,noarchive"><title>Secure sign-in</title><link rel="icon" href="data:,"><link rel="stylesheet" href="/portal/portal.css"></head>
+<body><div class="center"><form class="box" id="f" autocomplete="on">
+<h1>Private portal</h1><p class="muted">Authorized users only. All activity is logged.</p>
+<label>Email<input name="email" type="email" autocomplete="username" required></label>
+<label>Password<input name="password" type="password" autocomplete="current-password" required></label>
+<label id="codeRow" hidden>Authenticator code<input name="code" inputmode="numeric" pattern="\d{6}" maxlength="6" autocomplete="one-time-code"></label>
+<button type="submit">Sign in</button><p id="msg" class="err" role="alert"></p></form></div>
+<script src="/portal/login.js"></script></body></html>
