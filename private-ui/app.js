@@ -173,7 +173,7 @@ views.calc = async () => {
   cf.addEventListener('input', () => { for (const k of ['minCap', 'minDscr', 'minCoc', 'minIrr']) if (cf.elements[k].value !== '') crit[k] = +cf.elements[k].value; draw(); });
   cf.onsubmit = guard(async (e) => { e.preventDefault(); const b = { type: 'criteria', minCap: crit.minCap, minDscr: crit.minDscr, minCoc: crit.minCoc, minIrr: crit.minIrr };
     crit._id ? await api('/records/assumption/' + crit._id, 'PUT', b) : (crit._id = (await api('/records/assumption', 'POST', b)).id); toast('Targets saved'); });
-  main.append(h('h2', {}, 'Advanced calculator'), h('p', { class: 'conf' }, 'Proprietary underwriting model'), save, vbox, cf, f, out); draw();
+  main.append(h('h2', {}, 'Advanced calculator'), h('p', { class: 'conf' }, 'Proprietary underwriting model'), save, f, out, vbox, cf); draw();
 };
 
 views.compare = async () => {
