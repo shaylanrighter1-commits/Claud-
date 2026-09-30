@@ -11,9 +11,24 @@ if (db.prepare("SELECT COUNT(*) c FROM users WHERE role='owner'").get().c > 0) {
 }
 function askHidden(q) {
   return new Promise((resolve) => {
-    const rl = readline.createInterface({ input: process.stdin, output: process.stdout, terminal: true });
-    rl._writeToOutput = (s) => { if (s.includes(q)) process.stdout.write(s); };
-    rl.question(q, (a) => { rl.close(); process.stdout.write('\n'); resolve(a); });
+    if (!process.stdin.isTTY) { // piped input (CI): read a line without echo concerns
+      const rl = readline.createInterface({ input: process.stdin });
+      rl.question('', (a) => { rl.close(); resolve(a); });
+      return;
+    }
+    process.stdout.write(q);
+    let pw = '';
+    readline.emitKeypressEvents(process.stdin);
+    process.stdin.setRawMode(true); process.stdin.resume();
+    const onKey = (str, key) => {
+      if (key.name === 'return' || key.name === 'enter') {
+        process.stdin.setRawMode(false); process.stdin.pause(); process.stdin.off('keypress', onKey);
+        process.stdout.write('\n'); resolve(pw);
+      } else if (key.ctrl && key.name === 'c') process.exit(130);
+      else if (key.name === 'backspace') pw = pw.slice(0, -1);
+      else if (str) pw += str;
+    };
+    process.stdin.on('keypress', onKey);
   });
 }
 (async () => {
