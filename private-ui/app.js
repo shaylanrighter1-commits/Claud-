@@ -69,13 +69,13 @@ views.plan = async () => {
   const secs = (await api('/records/plan')).sort((a, b) => (a.order ?? a.id) - (b.order ?? b.id));
   main.append(h('h2', {}, 'Business plan'), h('p', { class: 'conf' }, 'Confidential — encrypted at rest'));
   if (can('analyst')) {
-    const file = h('input', { type: 'file', accept: '.md,.txt' });
+    const file = h('input', { type: 'file' });
     const imp = h('button', { class: 'sec', onclick: guard(async () => {
       const f = file.files[0]; if (!f) throw new Error('Choose a .md or .txt file');
       const text = await f.text(); const parts = text.split(/^(?=#{1,3}\s)/m).filter((t) => t.trim());
       let i = secs.length;
       for (const p of parts) { const m = p.match(/^#{1,3}\s+(.*)\n?/); await api('/records/plan', 'POST', { title: m ? m[1].trim() : 'Untitled', body: m ? p.slice(m[0].length).trim() : p.trim(), order: i++ }); }
-      router();
+      router(); setTimeout(() => toast(`Imported ${parts.length} sections`), 300);
     }) }, 'Import');
     main.append(h('div', { class: 'panel' }, h('b', {}, 'Import plan text'), h('p', { class: 'muted' }, 'Markdown/plain text is split into sections at headings. For PDF/Word originals, use Documents (stored encrypted).'), h('div', { class: 'row' }, file, imp, h('button', { onclick: () => editPlan() }, 'New section'))));
   }
