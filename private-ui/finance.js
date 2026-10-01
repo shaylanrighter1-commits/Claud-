@@ -124,44 +124,56 @@
     const t = String(text || '').replace(/\r/g, '');
     const num = (m) => (m ? Number(String(m[1]).replace(/,/g, '')) : null);
     const out = { found: [], estimated: [] };
-    const addr = t.match(/^[ \t]*(\d{1,6}[ \t]+[^\n,]{3,60}),[ \t]*([A-Za-z][A-Za-z .'-]{1,40}),[ \t]*([A-Z]{2})[ \t]+(\d{5})/m);
+    const RE_CITY = "([A-Za-z][A-Za-z .'-]{1,40}),[ \\t]*([A-Z]{2})[ \\t]+(\\d{5})";
+    const addr = t.match(new RegExp("^[ \\t]*(\\d{1,6}[ \\t]+[^\\n,]{3,60}),[ \\t]*" + RE_CITY, 'm'))            // "123 Main St, City, ST 12345" on one line
+      || t.match(new RegExp("^[ \\t]*(\\d{1,6}[ \\t]+[^\\n,]{3,60})[ \\t]*\\n[ \\t]*" + RE_CITY, 'm'))           // street and "City, ST 12345" on two lines
+      || t.match(new RegExp("(\\d{1,6}[ \\t]+[A-Za-z0-9 .'#-]{3,50}),[ \\t]*" + RE_CITY));                       // address in the middle of a line
     if (addr) {
       out.address = `${addr[1].trim()}, ${addr[2].trim()}, ${addr[3]} ${addr[4]}`; out.found.push('address');
       const before = t.slice(0, addr.index).split('\n').map((l) => l.trim()).filter(Boolean).reverse();
-      const prev = before.find((l) => !/^(back to|multifamily|apartment|listing)/i.test(l) && !/\$/.test(l) && l.length <= 60);
+      const LABEL = /^(back to.*|multi-?family( home)?|apartments?|listing.*|price( cut)?|(asking|list|listing) price|beds?|baths?|sq\.? ?ft\.?|square feet|status|for sale|new|open house|duplex|triplex|fourplex|residential income|overview|description|about|home|property|details|photos?|save|share|tour|contact|request a tour|est\. ?payment.*)$/i;
+      const prev = before.find((l) => !LABEL.test(l) && !/\$/.test(l) && /[A-Za-z]/.test(l) && l.length <= 60);
       out.name = prev && prev.toLowerCase() !== addr[1].trim().toLowerCase() && !/^\d/.test(prev) ? prev : addr[1].trim();
     }
     const price = num(t.match(/(?:Listing|Asking|List)\s*Price\s*:?\s*\$\s*([\d,]{4,})/i)) || num(t.match(/\$\s*([\d,]{6,})/));
     if (price) { out.askingPrice = price; out.found.push('price'); }
-    const units = num(t.match(/Number of Units\s*:?\s*(\d{1,4})\b/i)) || num(t.match(/\b(\d{1,4})[-\s]units?\b/i));
+    const units = num(t.match(/(?:Number|No\.?|#|Total)\s*(?:of\s*)?Units\s*:?\s*(\d{1,4})\b/i)) || num(t.match(/\bUnits\s*:\s*(\d{1,4})\b/i)) || num(t.match(/\b(\d{1,4})[-\s]units?\b/i))
+      || (/\bduplex\b/i.test(t) ? 2 : /\btriplex\b/i.test(t) ? 3 : /\b(?:fourplex|quadplex|4-plex)\b/i.test(t) ? 4 : null);
     if (units) { out.units = units; out.found.push('units'); }
     const cap = num(t.match(/Cap Rate\s*:?\s*([\d.]+)\s*%/i)); if (cap) { out.capRate = cap; out.found.push('cap rate'); }
     const grm = num(t.match(/\bGRM\s*:?\s*([\d.]+)/i)); if (grm) { out.grm = grm; out.found.push('GRM'); }
     const occ = num(t.match(/Occupancy\s*:?\s*([\d.]+)\s*%/i)); if (occ) { out.occupancy = occ; out.found.push('occupancy'); }
-    const sf = num(t.match(/Gross SF\s*:?\s*([\d,]+)/i)); if (sf) out.grossSf = sf;
-    const yr = num(t.match(/Year Built\s*:?\s*(\d{4})/i)); if (yr) out.yearBuilt = yr;
+    const sf = num(t.match(/Gross SF\s*:?\s*([\d,]+)/i)) || num(t.match(/([\d,]{3,6})\s*(?:sq\.?\s*ft\.?|sqft|square feet)/i)); if (sf) out.grossSf = sf;
+    const yr = num(t.match(/(?:Year Built|Built in)\s*:?\s*(\d{4})/i)); if (yr) out.yearBuilt = yr;
+    const tax = num(t.match(/(?:Annual\s*Tax(?:\s*Amount)?|Property\s*Tax(?:es)?|Taxes)\s*(?:\(annual\))?\s*:?\s*\$\s*([\d,]+)/i));
+    const noi = num(t.match(/(?:Net Operating Income|NOI)\s*:?\s*\$\s*([\d,]+)/i));
+    const grossInc = num(t.match(/(?:Gross (?:Scheduled |Annual )?(?:Rent|Income)|Total (?:Gross )?(?:Annual )?(?:Rent|Income))\s*:?\s*\$\s*([\d,]+)/i));
+    const monthlyInc = num(t.match(/(?:Gross Monthly (?:Rent|Income)|Total Monthly (?:Rent|Income))\s*:?\s*\$\s*([\d,]+)/i));
     if (/marcus\s*&\s*millichap/i.test(t)) out.source = 'Marcus & Millichap';
     else if (/loopnet/i.test(t)) out.source = 'LoopNet'; else if (/crexi/i.test(t)) out.source = 'Crexi';
     else if (url) { try { out.source = new URL(url).hostname.replace(/^www\./, ''); } catch (e) { /* ignore */ } }
     if (/^https?:\/\//i.test(url || '')) out.listingUrl = url.trim();
 
     // Estimates: derive rent from GRM and spread costs so the model's NOI matches the listing's cap rate.
+    let capUse = cap; if (!capUse && noi && price) { capUse = Math.round(noi / price * 10000) / 100; out.capRate = capUse; out.found.push('NOI'); }
     const uw = {};
     if (price && units) {
       uw.units = units; uw.purchasePrice = price; uw.otherIncome = 0; uw.mgmtPct = 5; uw.reservesPerUnit = 300; uw.payroll = 0;
       uw.vacancyPct = occ ? Math.max(0, Math.round((100 - occ) * 10) / 10) : 5; if (uw.vacancyPct < 3) uw.vacancyPct = 3;
       uw.capex = Math.round(price * 0.03 / 1000) * 1000;
-      if (cap) uw.exitCapPct = Math.round((cap + 0.5) * 100) / 100;
-      if (grm) {
-        const gross = price / grm; uw.avgRent = Math.round(gross / 12 / units);
+      if (capUse) uw.exitCapPct = Math.round((capUse + 0.5) * 100) / 100;
+      const gross = grm ? price / grm : grossInc || (monthlyInc ? monthlyInc * 12 : null);
+      if (gross) {
+        uw.avgRent = Math.round(gross / 12 / units);
         const egi = gross * (1 - uw.vacancyPct / 100);
-        if (cap) {
-          const rest = egi - price * cap / 100 - egi * 0.05 - 300 * units;
+        if (capUse) {
+          const rest = egi - price * capUse / 100 - egi * 0.05 - 300 * units;
           if (rest > 0) Object.assign(uw, { taxes: Math.round(rest * 0.40), insurance: Math.round(rest * 0.15), utilities: Math.round(rest * 0.20), repairs: Math.round(rest * 0.18), admin: Math.round(rest * 0.07) });
           out.estimated.push('expenses (spread to match the listing cap rate)');
         }
-        out.estimated.push('average rent (price ÷ GRM)');
+        out.estimated.push(grm ? 'average rent (price ÷ GRM)' : 'average rent (listed gross income ÷ units)');
       }
+      if (tax && tax >= 300 && tax < price * 0.06) { uw.taxes = tax; out.found.push('property taxes'); }
       out.estimated.push('capex (3% of price)', 'exit cap (listing cap + 0.5)');
     }
     out.uw = uw;

@@ -259,3 +259,23 @@ test('listing fetch works with a real hostname (DNS pinning must support the all
   assert.match(body, /Cap Rate/);
   srv.close();
 });
+
+test('listing parser handles residential-portal style text (synthetic samples), without inventing numbers', () => {
+  const F = require('../private-ui/finance.js');
+  // Redfin/Zillow-style: street and "City, ST ZIP" on separate lines, duplex wording, annual tax label
+  const a = F.parseListing('$1,250,000\nPrice\n12320 Texas Ave\nLos Angeles, CA 90025\nDuplex\n3,400 sq ft\nBuilt in 1962\nAnnual Tax Amount: $14,800\nGross Scheduled Income: $78,000\nNet Operating Income $41,000', 'https://www.redfin.com/CA/Los-Angeles/12320-Texas-Ave-90025/home/6764141');
+  assert.equal(a.address, '12320 Texas Ave, Los Angeles, CA 90025');
+  assert.equal(a.name, '12320 Texas Ave');               // not the label "Price"
+  assert.equal(a.units, 2); assert.equal(a.askingPrice, 1250000);
+  assert.equal(a.grossSf, 3400); assert.equal(a.yearBuilt, 1962);
+  assert.equal(a.uw.taxes, 14800);
+  assert.equal(a.uw.avgRent, 3250);                       // 78,000 / 12 / 2
+  assert.ok(Math.abs(a.capRate - 3.28) < 0.01);           // derived from NOI / price
+  assert.equal(a.source, 'redfin.com');
+  // Single-family style page: price + address found, but no units or rent -> nothing invented
+  const b = F.parseListing('$899,000\n1234 Main St, Los Angeles, CA 90025\n3 beds 2 baths 1,800 sq ft', '');
+  assert.equal(b.askingPrice, 899000); assert.equal(b.units, undefined); assert.equal(b.uw.avgRent, undefined);
+  // "Units: 4" label and mid-line address
+  const c = F.parseListing('Great fourplex at 55 Oak Lane, Fresno, CA 93721 listed at Asking Price: $640,000. Units: 4');
+  assert.equal(c.units, 4); assert.equal(c.address, '55 Oak Lane, Fresno, CA 93721');
+});
