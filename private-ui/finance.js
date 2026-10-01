@@ -119,6 +119,21 @@
     if (passed < checks.length) verdict = (m.dscr !== null && m.dscr < 1) || passed <= 1 ? 'Not a good deal' : 'Borderline';
     return { verdict, passed, total: checks.length, checks };
   }
+  // What would it take to pass? Highest price meeting each target, the price meeting ALL, and the rent needed at the current price.
+  function whatWouldWork(input, criteria) {
+    const c = Object.assign({}, DEFAULT_CRITERIA, criteria || {});
+    const per = {
+      cap: maxPrice(input, 'cap', c.minCap / 100), dscr: maxPrice(input, 'dscr', c.minDscr),
+      coc: maxPrice(input, 'coc', c.minCoc / 100), irr: maxPrice(input, 'irr', c.minIrr / 100)
+    };
+    const vals = Object.values(per);
+    const allPrice = vals.every((v) => v !== null) ? Math.min(...vals) : null;
+    const passes = (rent) => evaluate(analyze({ ...input, avgRent: rent }).metrics, c).passed === 4;
+    let rentForAll = null;
+    if (passes(20000)) { let lo = 50, hi = 20000; for (let i = 0; i < 60; i++) { const mid = (lo + hi) / 2; passes(mid) ? (hi = mid) : (lo = mid); } rentForAll = Math.ceil(hi); }
+    const price = Number(input.purchasePrice) || DEFAULTS.purchasePrice;
+    return { per, allPrice, discount: allPrice === null ? null : 1 - allPrice / price, rentForAll, currentRent: Number(input.avgRent) || DEFAULTS.avgRent, alreadyPasses: evaluate(analyze(input).metrics, c).passed === 4 };
+  }
   // Ranks deals against the owner's targets: verdict first, then targets met, then IRR, DSCR, cap rate.
   function rankDeals(items, criteria) {
     const rank = { 'Good deal': 2, Borderline: 1, 'Not a good deal': 0 };
@@ -201,5 +216,5 @@
     out.uw = uw;
     return out;
   }
-  return { DEFAULTS, DEFAULT_CRITERIA, analyze, maxPrice, portfolio, irr, monthlyPayment, evaluate, rankDeals, parseListing };
+  return { DEFAULTS, DEFAULT_CRITERIA, analyze, maxPrice, portfolio, irr, monthlyPayment, evaluate, rankDeals, whatWouldWork, parseListing };
 });

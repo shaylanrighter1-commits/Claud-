@@ -13,7 +13,8 @@
     "create-owner": "node scripts/create-owner.js",
     "gen-keys": "node scripts/gen-keys.js",
     "test": "node --test test/*.test.js",
-    "reset-password": "node scripts/reset-password.js"
+    "reset-password": "node scripts/reset-password.js",
+    "backup": "node scripts/backup.js"
   },
   "dependencies": {
     "express": "^4.21.2"

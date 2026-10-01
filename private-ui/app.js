@@ -62,7 +62,7 @@ const views = {};
 const NAV = [
   ['overview', 'Overview'], ['plan', 'Business plan'], ['properties', 'Properties'], ['calc', 'Calculator'], ['compare', 'Compare'],
   ['capital', 'Capital & financing'], ['projections', 'Projections'], ['docs', 'Documents'], ['inquiries', 'Inquiries', 'analyst'],
-  ['publish', 'Publishing', 'owner'], ['users', 'Users & access', 'owner'], ['audit', 'Audit log', 'owner']
+  ['publish', 'Publishing', 'owner'], ['users', 'Users & access', 'owner'], ['audit', 'Audit log', 'owner'], ['backup', 'Backup', 'owner']
 ];
 
 views.overview = async () => {
@@ -123,6 +123,7 @@ views.properties = async () => {
     { label: 'Asking', num: 1, render: (p) => usd(p.askingPrice) }, { label: 'Target price', num: 1, render: (p) => usd(p.targetPrice) },
     { label: 'Cap @ target', num: 1, render: (p) => (p.uw ? pct(F.analyze({ ...p.uw, purchasePrice: p.targetPrice || p.uw.purchasePrice }).metrics.capRate, 2) : '—') },
     { label: 'IRR', num: 1, render: (p) => (p.uw ? pct(F.analyze(p.uw).metrics.irr) : '—') },
+    { label: 'Passes at', num: 1, render: (p) => { if (!p.uw) return '—'; const ww = F.whatWouldWork(p.uw, crit); return ww.alreadyPasses ? '✓' : ww.allPrice === null ? 'n/a' : usd(ww.allPrice); } },
     { label: 'Verdict', render: (p) => (p.uw ? h('span', { class: 'tag ' + verdictClass(F.evaluate(F.analyze(p.uw).metrics, crit).verdict) }, verdictIcon(F.evaluate(F.analyze(p.uw).metrics, crit).verdict) + F.evaluate(F.analyze(p.uw).metrics, crit).verdict) : '—') }], props));
   if (!props.length) main.append(h('p', { class: 'muted' }, 'No properties yet.'));
 };
@@ -170,7 +171,9 @@ function editProperty(p = {}) {
     p.listingUrl && /^https?:\/\//i.test(p.listingUrl) && h('p', {}, h('a', { href: p.listingUrl, target: '_blank', rel: 'noopener noreferrer' }, 'Open original listing')),
     h('div', { class: 'panel' }, h('div', { class: 'fields' }, input('Name', 'name', p.name, 'text', { required: true }), input('Address', 'address', p.address), select('Stage', 'stage', STAGES, p.stage || 'Sourcing'),
       input('Asking price ($)', 'askingPrice', p.askingPrice, 'number'), input('Target acquisition price ($)', 'targetPrice', p.targetPrice, 'number'), input('Seller / broker', 'source', p.source)),
-      h('label', {}, 'Notes & strategy', h('textarea', { name: 'notes' }, p.notes || ''))),
+      h('label', {}, 'Notes & strategy', h('textarea', { name: 'notes' }, p.notes || '')),
+      h('label', {}, 'Add a dated note to this property\'s history (optional)', h('input', { name: 'logNote', placeholder: 'e.g. Called the broker, asked for rent roll' })),
+      (p.history || []).length ? h('div', {}, h('b', {}, 'History'), h('ul', { class: 'muted' }, p.history.slice().reverse().map((e) => h('li', {}, `${new Date(e.t).toLocaleDateString()} ${new Date(e.t).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })} — ${e.text}`)))) : null),
     UW_GROUPS.map(([t, fields]) => h('div', { class: 'panel' }, h('b', {}, t), h('div', { class: 'fields' }, Object.entries(fields).map(([k, l]) => input(l, k, uw[k], 'number'))))),
     h('div', { class: 'row' }, h('button', {}, 'Save'), h('button', { type: 'button', class: 'sec', onclick: () => { sessionStorage.setItem('calc', JSON.stringify(uwInputs(f))); location.hash = 'calc'; } }, 'Open in calculator'),
       h('button', { type: 'button', class: 'sec', onclick: () => router() }, 'Cancel')));
@@ -178,6 +181,11 @@ function editProperty(p = {}) {
   f.onsubmit = guard(async (e) => {
     e.preventDefault(); const d = formData(f);
     const body = { listingUrl: /^https?:\/\//i.test(d.listingUrl || '') ? d.listingUrl.trim() : undefined, name: d.name, address: d.address, stage: d.stage, askingPrice: +d.askingPrice || null, targetPrice: +d.targetPrice || null, source: d.source, notes: d.notes, uw: uwInputs(f) };
+    const hist = [...(p.history || [])], now = Date.now();
+    if (p.id && p.stage && p.stage !== d.stage) hist.push({ t: now, text: `Stage: ${p.stage} → ${d.stage}` });
+    if (!p.id) hist.push({ t: now, text: `Added (${d.stage})` });
+    if ((d.logNote || '').trim()) hist.push({ t: now, text: d.logNote.trim().slice(0, 300) });
+    body.history = hist.slice(-200);
     p.id ? await api('/records/property/' + p.id, 'PUT', body) : await api('/records/property', 'POST', body); router();
   });
   if (p.id && can('owner')) f.append(h('div', { class: 'row' }, h('button', { type: 'button', class: 'danger', onclick: guard(async () => { if (confirm('Delete property?')) { await api('/records/property/' + p.id, 'DELETE'); router(); } }) }, 'Delete property')));
@@ -195,13 +203,18 @@ views.calc = async () => {
     const inputs = uwInputs(f), r = F.analyze(inputs), m = r.metrics;
     sessionStorage.setItem('calc', JSON.stringify(inputs));
     const solve = (metric, target) => F.maxPrice(inputs, metric, target);
-    vbox.replaceChildren(verdictBanner(F.evaluate(m, crit)));
+    const ww = F.whatWouldWork(inputs, crit), cur = inputs.purchasePrice;
+    vbox.replaceChildren(verdictBanner(F.evaluate(m, crit)), h('div', { class: 'panel' }, h('b', {}, 'What would make this deal pass your targets?'),
+      ww.alreadyPasses ? h('p', { class: 'ok' }, '✓ It already passes all four of your targets at this price and rent.') : [
+        h('p', {}, ww.allPrice === null ? 'No purchase price passes all four targets with these other numbers.' : `Lower the price to about ${usd(ww.allPrice)} (${pct(ww.discount, 0)} below ${usd(cur)}) and every target passes.`),
+        h('p', {}, ww.rentForAll === null ? 'Raising rent alone cannot make it pass.' : `Or keep the price and raise average rent to about ${usd(ww.rentForAll)} a month per unit (now ${usd(ww.currentRent)}).`),
+        h('p', { class: 'muted' }, `Highest price for each target: cap rate ${usd(ww.per.cap)}, debt coverage ${usd(ww.per.dscr)}, cash-on-cash ${usd(ww.per.coc)}, IRR ${usd(ww.per.irr)}.`)]));
     out.replaceChildren(
       h('div', { class: 'cards' }, kpi('NOI (Yr 1)', usd(m.noi)), kpi('Cap rate', pct(m.capRate, 2)), kpi('DSCR', x2(m.dscr)), kpi('Debt yield', pct(m.debtYield)), kpi('Cash-on-cash (Yr 1)', pct(m.cashOnCash)),
         kpi('Equity required', usd(r.equity)), kpi('Loan', usd(r.loan)), kpi('Price / unit', usd(m.pricePerUnit)), kpi('All-in / unit', usd(m.allInBasis)), kpi('Break-even occ.', pct(m.breakevenOccupancy)),
         kpi('Expense ratio', pct(m.expenseRatio)), kpi('Exit value', usd(m.exitValue)), kpi('IRR', pct(m.irr)), kpi('Equity multiple', x2(m.equityMultiple))),
       h('div', { class: 'panel' }, h('b', {}, 'Maximum purchase price (other inputs held constant)'), table([{ label: 'To achieve' }, { label: 'Max price', num: 1 }].map((c, i) => ({ ...c, render: (r) => r[i] })), [
-        ['Cap rate ≥ 7.0%', usd(solve('cap', 0.07))], ['DSCR ≥ 1.25x', usd(solve('dscr', 1.25))], ['Cash-on-cash ≥ 8%', usd(solve('coc', 0.08))], ['IRR ≥ 15%', usd(solve('irr', 0.15))]])),
+        [`Cap rate ≥ ${crit.minCap}%`, usd(solve('cap', crit.minCap / 100))], [`DSCR ≥ ${crit.minDscr}x`, usd(solve('dscr', crit.minDscr))], [`Cash-on-cash ≥ ${crit.minCoc}%`, usd(solve('coc', crit.minCoc / 100))], [`IRR ≥ ${crit.minIrr}%`, usd(solve('irr', crit.minIrr / 100))]])),
       h('div', { class: 'panel' }, h('b', {}, 'Pro forma'), table([{ label: 'Year', key: 'year' }, ...[['gpr', 'Gross potential rent'], ['vacancy', 'Vacancy'], ['egi', 'EGI'], ['opex', 'Operating expenses'], ['noi', 'NOI'], ['debtService', 'Debt service'], ['cashFlow', 'Cash flow']].map(([k, l]) => ({ label: l, num: 1, render: (y) => usd(y[k]) })), { label: 'DSCR', num: 1, render: (y) => x2(y.dscr) }], r.years)));
   };
   f.addEventListener('input', draw);
@@ -341,6 +354,16 @@ views.audit = async () => {
   const { chain, rows } = await api('/audit');
   main.append(h('h2', {}, 'Audit log'), h('p', { class: chain.ok ? 'ok' : 'err' }, chain.ok ? '✓ Hash chain intact (tamper-evident).' : `✗ Chain broken at entry ${chain.brokenAt}`),
     table([{ label: 'Time', render: (r) => fdate(r.ts) }, { label: 'User', key: 'email' }, { label: 'Action', key: 'action' }, { label: 'Target', key: 'target' }, { label: 'IP', key: 'ip' }, { label: 'Detail', key: 'detail' }], rows));
+};
+
+views.backup = async () => {
+  const list = await api('/backups');
+  const out = h('div', {});
+  main.append(h('h2', {}, 'Backup'), h('div', { class: 'panel' },
+    h('p', {}, 'Saves a full copy of your plan, properties, documents and settings to the ', h('code', {}, 'data/backups'), ' folder on the computer running the site. Nothing is sent over the internet.'),
+    h('p', { class: 'warn' }, 'Each backup contains a folder called KEYS-store-separately. Without those keys your data cannot be read. Copy the whole backup (and move the keys folder somewhere else, such as a USB drive or password manager) so one lost laptop does not lose everything.'),
+    h('div', { class: 'row' }, h('button', { onclick: guard(async () => { const r = await api('/backups', 'POST'); out.replaceChildren(h('p', { class: 'ok' }, `Backup created: ${r.path}`)); setTimeout(router, 4000); }) }, 'Back up now')), out),
+    h('h3', {}, 'Existing backups'), list.length ? table([{ label: 'Created (UTC)', key: 'name' }, { label: 'Size', num: 1, render: (b) => Math.ceil(b.size / 1024) + ' KB' }], list) : h('p', { class: 'muted' }, 'No backups yet. Click Back up now.'));
 };
 
 // ---------- shell ----------

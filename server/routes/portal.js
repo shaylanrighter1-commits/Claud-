@@ -14,6 +14,7 @@ const { records, docs } = require('../store');
 const { sig } = require('./public');
 const { rateLimit, sameOrigin } = require('../security');
 const { fetchListing, htmlToText } = require('../listing-fetch');
+const { createBackup, listBackups } = require('../backup');
 
 const UI = path.join(__dirname, '..', '..', 'private-ui');
 const router = express.Router();
@@ -211,6 +212,14 @@ api.post('/publish', A.requireRole('owner'), rateLimit('publish', 10, 60 * 1000)
 api.delete('/publish/:slug', A.requireRole('owner'), (req, res) => {
   pub.prepare('DELETE FROM published_content WHERE slug=?').run(String(req.params.slug));
   audit(req, req.user.id, 'unpublish', req.params.slug); res.json({ ok: true });
+});
+
+// Backups (owner only): written to the data/backups folder on the server; nothing is sent over the network.
+api.get('/backups', A.requireRole('owner'), (req, res) => res.json(listBackups()));
+api.post('/backups', A.requireRole('owner'), rateLimit('backup', 5, 60 * 1000), (req, res) => {
+  const r = createBackup(db, pub);
+  audit(req, req.user.id, 'backup.create', r.name);
+  res.status(201).json({ name: r.name, path: r.path, keysIncluded: r.keysIncluded });
 });
 
 // Full encrypted-at-rest export for backup/migration (owner only, audited).

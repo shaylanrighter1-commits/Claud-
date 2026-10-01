@@ -293,3 +293,32 @@ test('compare ranking picks the stronger deal and flags weak or tied groups', ()
   assert.equal(bad.winner.ev.verdict, 'Not a good deal');                          // UI shows "no clear winner"
   assert.equal(F.rankDeals([winch, winch]).closeCall, true);                       // identical deals are a close call
 });
+
+test('what-would-make-this-work: price and rent suggestions actually pass all targets', () => {
+  const F = require('../private-ui/finance.js');
+  const marion = { units: 12, avgRent: 950, otherIncome: 25, purchasePrice: 1350000, capex: 60000, taxes: 16800, insurance: 8400, utilities: 10800, repairs: 12000, payroll: 0, admin: 4800, mgmtPct: 6, ltvPct: 65, ratePct: 6.75, exitCapPct: 6.5 };
+  const ww = F.whatWouldWork(marion);
+  assert.equal(ww.alreadyPasses, false);
+  assert.ok(ww.allPrice > 0 && ww.allPrice < 1350000);
+  assert.equal(F.evaluate(F.analyze({ ...marion, purchasePrice: ww.allPrice - 1 }).metrics).passed, 4);   // suggested price passes everything
+  assert.ok(ww.rentForAll > 950);
+  assert.equal(F.evaluate(F.analyze({ ...marion, avgRent: ww.rentForAll }).metrics).passed, 4);          // suggested rent passes everything
+  assert.equal(F.whatWouldWork(F.DEFAULTS).alreadyPasses, true);
+});
+
+test('backup: consistent snapshot of databases, encrypted vault and keys; owner-only API', async () => {
+  const { createBackup } = require('../server/backup');
+  const pdb = require('../server/public-db');
+  const r = createBackup(db, pdb);
+  const fsx = require('node:fs'), pth = require('node:path');
+  assert.ok(fsx.existsSync(pth.join(r.path, 'data', 'private.db')) && fsx.existsSync(pth.join(r.path, 'data', 'public.db')));
+  assert.ok(fsx.readdirSync(pth.join(r.path, 'data', 'vault')).length >= 1);                     // documents uploaded in an earlier test
+  assert.ok(fsx.existsSync(pth.join(r.path, 'README.txt')));
+  const { DatabaseSync } = require('node:sqlite');
+  const copy = new DatabaseSync(pth.join(r.path, 'data', 'private.db'));
+  assert.equal(copy.prepare('SELECT COUNT(*) c FROM users').get().c, db.prepare('SELECT COUNT(*) c FROM users').get().c);
+  assert.ok(!fsx.readFileSync(pth.join(r.path, 'data', 'private.db')).includes('TARGET-PRICE'));  // still encrypted inside the copy
+  copy.close();
+  assert.equal((await fetch(base + '/portal/api/backups', { method: 'POST', headers: { Origin: base } })).status, 401);
+  assert.equal((await owner.req('POST', '/portal/api/backups')).status, 201);
+});

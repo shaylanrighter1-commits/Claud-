@@ -30,3 +30,8 @@ From the project folder on the machine running the site (this keeps all data):
 USER_EMAIL=you@example.com npm run reset-password           # prompts for the new password
 USER_EMAIL=you@example.com RESET_2FA=1 npm run reset-password  # also clears 2FA if you lost your phone
 ```
+
+## Backups
+`npm run backup` (or **Backup → Back up now** in the dashboard, owner only) writes a full snapshot to `data/backups/<timestamp>/`:
+`data/` (databases + encrypted documents) and `KEYS-store-separately/` (the encryption keys). **Copy the backup off this computer and keep the keys apart from the data** — without the keys the data cannot be recovered.
+To restore: stop the site, copy `data/*` back into the project's `data` folder, put the key files beside them, start the site.
