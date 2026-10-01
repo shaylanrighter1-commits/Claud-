@@ -215,3 +215,37 @@ test('listing paste parser fills address, price, units and derives estimates tha
   assert.equal(F.parseListing('hello world').found.length, 0);
   assert.equal(F.parseListing('x', 'javascript:alert(1)').listingUrl, undefined);   // only http(s) links are kept
 });
+
+test('listing fetch: SSRF protections and happy path (against a local mock page)', async () => {
+  const http = require('node:http');
+  const { fetchListing, htmlToText, isPrivateIp } = require('../server/listing-fetch');
+  for (const ip of ['127.0.0.1', '10.0.0.5', '192.168.1.9', '172.16.4.4', '169.254.169.254', '::1', 'fd00::1', '::ffff:127.0.0.1', '0.0.0.0'])
+    assert.equal(isPrivateIp(ip), true, ip);
+  assert.equal(isPrivateIp('8.8.8.8'), false);
+  const blocked = async (u, opts) => { try { await fetchListing(u, opts); return false; } catch (e) { return !!e.publicMessage; } };
+  assert.ok(await blocked('http://www.marcusmillichap.com/x'));                       // not https
+  assert.ok(await blocked('https://evil.example.com/x'));                             // not allow-listed
+  assert.ok(await blocked('https://marcusmillichap.com.evil.com/x'));                 // suffix trick
+  assert.ok(await blocked('https://user:pw@www.marcusmillichap.com/x'));              // credentials
+  assert.ok(await blocked('http://127.0.0.1:1/x', { hosts: ['127.0.0.1'], allowHttp: true })); // private IP without allowPrivate
+  assert.ok(await blocked('http://169.254.169.254/latest/meta-data', { hosts: ['169.254.169.254'], allowHttp: true }));
+  // happy path + redirect to a disallowed host is refused
+  const srv = http.createServer((req, res) => {
+    if (req.url === '/redir') { res.writeHead(302, { Location: 'http://localhost:1/' }); return res.end(); }
+    res.writeHead(200, { 'Content-Type': 'text/html' });
+    res.end('<html><script>var x=1</script><body><h1>4484 La Deney St</h1><p>4484 La Deney St, Montclair, CA 91763</p><div>Listing Price: $1,435,000</div><span>Cap Rate</span><span>5.40%</span><span>Number of Units</span><span>4</span><span>GRM</span><span>13.29</span></body></html>');
+  });
+  await new Promise((r) => srv.listen(0, '127.0.0.1', r));
+  const port = srv.address().port, opts = { hosts: ['127.0.0.1'], allowHttp: true, allowPrivate: true };
+  const F = require('../private-ui/finance.js');
+  const parsed = F.parseListing(htmlToText(await fetchListing(`http://127.0.0.1:${port}/p`, opts)), 'x');
+  assert.equal(parsed.units, 4); assert.equal(parsed.askingPrice, 1435000); assert.equal(parsed.capRate, 5.4);
+  assert.ok(await blocked(`http://127.0.0.1:${port}/redir`, opts));                    // redirect target not allow-listed
+  srv.close();
+});
+
+test('listing fetch route: auth required, viewers blocked, bad links rejected', async () => {
+  assert.equal((await fetch(base + '/portal/api/listing/fetch', { method: 'POST', headers: { 'Content-Type': 'application/json', Origin: base }, body: '{}' })).status, 401);
+  assert.equal((await owner.req('POST', '/portal/api/listing/fetch', { url: 'https://evil.example.com/x' })).status, 502);
+  assert.equal((await owner.req('POST', '/portal/api/listing/fetch', {})).status, 400);
+});

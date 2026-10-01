@@ -127,20 +127,33 @@ views.properties = async () => {
 };
 function editProperty(p = {}) {
   const uw = { ...F.DEFAULTS, ...(p.uw || {}) };
-  const qfText = h('textarea', { placeholder: 'Open the listing page, press Cmd+A then Cmd+C, and paste here. Sign in first so hidden numbers are included.' });
-  const qfUrl = h('input', { type: 'url', placeholder: 'Listing link (optional, saved with the property)', value: p.listingUrl || '', name: 'listingUrl' });
+  const qfText = h('textarea', { placeholder: 'Backup: if the link does not work, open the listing (signed in), press Cmd+A then Cmd+C, and paste the page text here, then click Auto-fill.' });
+  const qfUrl = h('input', { type: 'url', placeholder: 'Paste a listing link (Marcus & Millichap, LoopNet, Crexi) and press Enter', value: p.listingUrl || '', name: 'listingUrl' });
   const qfMsg = h('p', { class: 'muted' });
-  const quickFill = h('div', { class: 'panel' }, h('b', {}, 'Quick fill from a listing'), h('p', { class: 'muted' }, 'Nothing is sent anywhere. The text is read on your computer.'), qfUrl, qfText,
-    h('div', { class: 'row' }, h('button', { type: 'button', onclick: () => {
-      const r = F.parseListing(qfText.value, qfUrl.value);
-      if (!r.found.length) { qfMsg.className = 'err'; qfMsg.textContent = 'Could not find a price or address. Make sure you copied the whole listing page.'; return; }
-      const set = (n, v) => { if (v !== undefined && v !== null && f.elements[n]) f.elements[n].value = v; };
-      set('name', r.name); set('address', r.address); set('askingPrice', r.askingPrice); set('source', r.source);
-      for (const [k, v] of Object.entries(r.uw)) set(k, v);
-      const extra = [r.capRate && `listing cap rate ${r.capRate}%`, r.grm && `GRM ${r.grm}`, r.occupancy && `occupancy ${r.occupancy}%`, r.grossSf && `${r.grossSf.toLocaleString()} sq ft`, r.yearBuilt && `built ${r.yearBuilt}`].filter(Boolean).join(', ');
-      set('notes', `Auto-filled from a listing${extra ? ' (' + extra + ')' : ''}.\nESTIMATED, not from the offering memorandum: ${r.estimated.join('; ') || 'none'}.\nVerify rents and expenses before relying on the verdict.`);
-      qfMsg.className = 'ok'; qfMsg.textContent = `Filled: ${r.found.join(', ')}. Estimated: ${r.estimated.join(', ') || 'nothing'}. Review the boxes below, then Save.`;
-    } }, 'Auto-fill'), qfMsg));
+  const applyListing = (r) => {
+    const set = (n, v) => { if (v !== undefined && v !== null && f.elements[n]) f.elements[n].value = v; };
+    set('name', r.name); set('address', r.address); set('askingPrice', r.askingPrice); set('source', r.source);
+    for (const [k, v] of Object.entries(r.uw)) set(k, v);
+    const extra = [r.capRate && `listing cap rate ${r.capRate}%`, r.grm && `GRM ${r.grm}`, r.occupancy && `occupancy ${r.occupancy}%`, r.grossSf && `${r.grossSf.toLocaleString()} sq ft`, r.yearBuilt && `built ${r.yearBuilt}`].filter(Boolean).join(', ');
+    set('notes', `Auto-filled from a listing${extra ? ' (' + extra + ')' : ''}.\nESTIMATED, not from the offering memorandum: ${r.estimated.join('; ') || 'none'}.\nVerify rents and expenses before relying on the verdict.`);
+    qfMsg.className = 'ok'; qfMsg.textContent = `Filled: ${r.found.join(', ')}. Estimated: ${r.estimated.join(', ') || 'nothing'}. Review the boxes below, then Save.`;
+  };
+  const autoFill = async () => {
+    const link = qfUrl.value.trim(); let text = qfText.value;
+    qfMsg.className = 'muted'; qfMsg.textContent = 'Working…';
+    try {
+      if (!text.trim()) {
+        if (!/^https?:\/\//i.test(link)) throw new Error('Paste a listing link first (or paste the page text in the big box).');
+        text = (await api('/listing/fetch', 'POST', { url: link })).text;
+      }
+      const r = F.parseListing(text, link);
+      if (!r.found.length) throw new Error('The site did not give me the numbers (it may need you to be signed in). Open the listing, press Cmd+A then Cmd+C, paste the page text in the big box, and click Auto-fill.');
+      applyListing(r);
+    } catch (e) { qfMsg.className = 'err'; qfMsg.textContent = e.message; }
+  };
+  qfUrl.addEventListener('keydown', (e) => { if (e.key === 'Enter') { e.preventDefault(); autoFill(); } });
+  const quickFill = h('div', { class: 'panel' }, h('b', {}, 'Quick fill from a listing'), h('p', { class: 'muted' }, 'Paste the link and press Enter. If the site blocks it, use the backup box.'), qfUrl, qfText,
+    h('div', { class: 'row' }, h('button', { type: 'button', onclick: autoFill }, 'Auto-fill'), qfMsg));
   const f = h('form', {}, h('h2', {}, p.id ? 'Edit property' : 'Add property'), quickFill,
     p.listingUrl && /^https?:\/\//i.test(p.listingUrl) && h('p', {}, h('a', { href: p.listingUrl, target: '_blank', rel: 'noopener noreferrer' }, 'Open original listing')),
     h('div', { class: 'panel' }, h('div', { class: 'fields' }, input('Name', 'name', p.name, 'text', { required: true }), input('Address', 'address', p.address), select('Stage', 'stage', STAGES, p.stage || 'Sourcing'),

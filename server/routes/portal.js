@@ -13,6 +13,7 @@ const { audit, verifyChain } = require('../audit');
 const { records, docs } = require('../store');
 const { sig } = require('./public');
 const { rateLimit, sameOrigin } = require('../security');
+const { fetchListing, htmlToText } = require('../listing-fetch');
 
 const UI = path.join(__dirname, '..', '..', 'private-ui');
 const router = express.Router();
@@ -137,6 +138,17 @@ api.delete('/documents/:id', A.requireRole('owner'), (req, res) => {
   if (id === null || !docs.remove(id)) return bad(res, 'Not found', 404);
   audit(req, req.user.id, 'document.delete', `doc:${id}`);
   res.json({ ok: true });
+});
+
+// Listing helper: fetch one public listing page (allow-listed sites only) and return its text for in-browser parsing.
+api.post('/listing/fetch', A.requireRole('analyst'), rateLimit('listing', 10, 60 * 1000), async (req, res) => {
+  const url = (req.body || {}).url;
+  if (typeof url !== 'string' || url.length > 500) return bad(res, 'A listing link is required');
+  try {
+    const text = htmlToText(await fetchListing(url, req.app.locals.listingFetchOpts));
+    audit(req, req.user.id, 'listing.fetch', (() => { try { return new URL(url).hostname; } catch { return 'invalid'; } })());
+    res.json({ text: text.slice(0, 200000) });
+  } catch (e) { bad(res, e.publicMessage || 'Could not fetch that page', 502); }
 });
 
 // Users (owner only; there is no public sign-up anywhere)
