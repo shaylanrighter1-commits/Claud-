@@ -249,3 +249,13 @@ test('listing fetch route: auth required, viewers blocked, bad links rejected', 
   assert.equal((await owner.req('POST', '/portal/api/listing/fetch', { url: 'https://evil.example.com/x' })).status, 502);
   assert.equal((await owner.req('POST', '/portal/api/listing/fetch', {})).status, 400);
 });
+
+test('listing fetch works with a real hostname (DNS pinning must support the all-addresses lookup shape)', async () => {
+  const http = require('node:http');
+  const { fetchListing } = require('../server/listing-fetch');
+  const srv = http.createServer((q, r) => r.end('<html>Cap Rate 5.4%</html>'));
+  await new Promise((r) => srv.listen(0, '127.0.0.1', r));
+  const body = await fetchListing(`http://localhost:${srv.address().port}/`, { hosts: ['localhost'], allowHttp: true, allowPrivate: true });
+  assert.match(body, /Cap Rate/);
+  srv.close();
+});

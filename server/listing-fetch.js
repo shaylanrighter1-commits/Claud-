@@ -36,7 +36,8 @@ async function fetchOnce(urlStr, o) {
   return new Promise((resolve, reject) => {
     const req = mod.request({
       host, port: u.port || (u.protocol === 'https:' ? 443 : 80), path: u.pathname + u.search, method: 'GET', servername: host,
-      lookup: (_h, _opts, cb) => cb(null, pinned.address, pinned.family),
+      // Node may ask for all addresses (Happy Eyeballs); answer in whichever shape it asks for.
+      lookup: (_h, opts, cb) => (opts && opts.all ? cb(null, [{ address: pinned.address, family: pinned.family }]) : cb(null, pinned.address, pinned.family)),
       headers: { 'User-Agent': 'Mozilla/5.0 (compatible; DealDashboard/1.0)', Accept: 'text/html', 'Accept-Encoding': 'identity', Host: u.host },
       timeout: TIMEOUT_MS
     }, (res) => {
@@ -48,7 +49,7 @@ async function fetchOnce(urlStr, o) {
       res.on('error', () => reject(fail('The download failed.')));
     });
     req.on('timeout', () => { req.destroy(); reject(fail('The site took too long to respond.')); });
-    req.on('error', () => reject(fail('Could not reach the site.')));
+    req.on('error', (e) => { console.error('[listing-fetch]', host, e.code || e.message); reject(fail(`Could not reach the site (${e.code || 'connection error'}).`)); });
     req.end();
   });
 }
