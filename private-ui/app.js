@@ -127,7 +127,22 @@ views.properties = async () => {
 };
 function editProperty(p = {}) {
   const uw = { ...F.DEFAULTS, ...(p.uw || {}) };
-  const f = h('form', {}, h('h2', {}, p.id ? 'Edit property' : 'Add property'),
+  const qfText = h('textarea', { placeholder: 'Open the listing page, press Cmd+A then Cmd+C, and paste here. Sign in first so hidden numbers are included.' });
+  const qfUrl = h('input', { type: 'url', placeholder: 'Listing link (optional, saved with the property)', value: p.listingUrl || '', name: 'listingUrl' });
+  const qfMsg = h('p', { class: 'muted' });
+  const quickFill = h('div', { class: 'panel' }, h('b', {}, 'Quick fill from a listing'), h('p', { class: 'muted' }, 'Nothing is sent anywhere. The text is read on your computer.'), qfUrl, qfText,
+    h('div', { class: 'row' }, h('button', { type: 'button', onclick: () => {
+      const r = F.parseListing(qfText.value, qfUrl.value);
+      if (!r.found.length) { qfMsg.className = 'err'; qfMsg.textContent = 'Could not find a price or address. Make sure you copied the whole listing page.'; return; }
+      const set = (n, v) => { if (v !== undefined && v !== null && f.elements[n]) f.elements[n].value = v; };
+      set('name', r.name); set('address', r.address); set('askingPrice', r.askingPrice); set('source', r.source);
+      for (const [k, v] of Object.entries(r.uw)) set(k, v);
+      const extra = [r.capRate && `listing cap rate ${r.capRate}%`, r.grm && `GRM ${r.grm}`, r.occupancy && `occupancy ${r.occupancy}%`, r.grossSf && `${r.grossSf.toLocaleString()} sq ft`, r.yearBuilt && `built ${r.yearBuilt}`].filter(Boolean).join(', ');
+      set('notes', `Auto-filled from a listing${extra ? ' (' + extra + ')' : ''}.\nESTIMATED, not from the offering memorandum: ${r.estimated.join('; ') || 'none'}.\nVerify rents and expenses before relying on the verdict.`);
+      qfMsg.className = 'ok'; qfMsg.textContent = `Filled: ${r.found.join(', ')}. Estimated: ${r.estimated.join(', ') || 'nothing'}. Review the boxes below, then Save.`;
+    } }, 'Auto-fill'), qfMsg));
+  const f = h('form', {}, h('h2', {}, p.id ? 'Edit property' : 'Add property'), quickFill,
+    p.listingUrl && /^https?:\/\//i.test(p.listingUrl) && h('p', {}, h('a', { href: p.listingUrl, target: '_blank', rel: 'noopener noreferrer' }, 'Open original listing')),
     h('div', { class: 'panel' }, h('div', { class: 'fields' }, input('Name', 'name', p.name, 'text', { required: true }), input('Address', 'address', p.address), select('Stage', 'stage', STAGES, p.stage || 'Sourcing'),
       input('Asking price ($)', 'askingPrice', p.askingPrice, 'number'), input('Target acquisition price ($)', 'targetPrice', p.targetPrice, 'number'), input('Seller / broker', 'source', p.source)),
       h('label', {}, 'Notes & strategy', h('textarea', { name: 'notes' }, p.notes || ''))),
@@ -137,7 +152,7 @@ function editProperty(p = {}) {
   if (!can('analyst')) for (const el of f.elements) el.disabled = true;
   f.onsubmit = guard(async (e) => {
     e.preventDefault(); const d = formData(f);
-    const body = { name: d.name, address: d.address, stage: d.stage, askingPrice: +d.askingPrice || null, targetPrice: +d.targetPrice || null, source: d.source, notes: d.notes, uw: uwInputs(f) };
+    const body = { listingUrl: /^https?:\/\//i.test(d.listingUrl || '') ? d.listingUrl.trim() : undefined, name: d.name, address: d.address, stage: d.stage, askingPrice: +d.askingPrice || null, targetPrice: +d.targetPrice || null, source: d.source, notes: d.notes, uw: uwInputs(f) };
     p.id ? await api('/records/property/' + p.id, 'PUT', body) : await api('/records/property', 'POST', body); router();
   });
   if (p.id && can('owner')) f.append(h('div', { class: 'row' }, h('button', { type: 'button', class: 'danger', onclick: guard(async () => { if (confirm('Delete property?')) { await api('/records/property/' + p.id, 'DELETE'); router(); } }) }, 'Delete property')));

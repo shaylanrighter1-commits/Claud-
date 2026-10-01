@@ -196,3 +196,22 @@ test('login still works when the browser holds an existing session cookie (no CS
   assert.equal((await c.req('POST', '/portal/api/auth/login', { email: 'owner@x.com', password: PW })).status, 200);
   assert.equal((await c.req('POST', '/portal/api/records/plan', { title: 'x' })).status, 403); // other writes still need the token
 });
+
+test('listing paste parser fills address, price, units and derives estimates that match the listing cap rate', () => {
+  const F = require('../private-ui/finance.js');
+  const win = F.parseListing('Back to the Properties Search Page\nMULTIFAMILY\n12601 S Winchester Ave\n12601 S Winchester Ave, Calumet Park, IL 60827\nListing Price: $840,000\nOFFERING MEMORANDUM & DEAL ROOM\nCap Rate\n8.03%\nNumber of Units\n12\nGRM\n6.16\nOccupancy\n95.0%\nPrice/Unit\n$70,000\nGross SF\n9,900\nMarcus & Millichap have been selected', 'https://www.marcusmillichap.com/properties/304851/12601-s-winchester-ave');
+  assert.equal(win.address, '12601 S Winchester Ave, Calumet Park, IL 60827');
+  assert.equal(win.name, '12601 S Winchester Ave');
+  assert.equal(win.askingPrice, 840000); assert.equal(win.units, 12); assert.equal(win.capRate, 8.03);
+  assert.equal(win.source, 'Marcus & Millichap');
+  assert.ok(Math.abs(win.uw.avgRent - 947) <= 1);
+  const m = F.analyze(win.uw).metrics;
+  assert.ok(Math.abs(m.capRate * 100 - 8.03) < 0.3, 'model cap rate should match listing, got ' + m.capRate);
+  const ld = F.parseListing('MULTIFAMILY\n4484 La Deney St\n4484 La Deney St, Montclair, CA 91763\nListing Price: $1,435,000\nCap Rate 5.40%\nNumber of Units 4\nGRM 13.29\nOccupancy 100.0%');
+  assert.equal(ld.units, 4); assert.equal(ld.askingPrice, 1435000);
+  assert.ok(Math.abs(F.analyze(ld.uw).metrics.capRate * 100 - 5.4) < 0.3);
+  const mar = F.parseListing('Marion 12\n2394 Marion Ave, North Bend, OR 97459\nListing Price: $1,350,000\nThis complex includes a total of 12 units');
+  assert.equal(mar.name, 'Marion 12'); assert.equal(mar.units, 12);
+  assert.equal(F.parseListing('hello world').found.length, 0);
+  assert.equal(F.parseListing('x', 'javascript:alert(1)').listingUrl, undefined);   // only http(s) links are kept
+});
