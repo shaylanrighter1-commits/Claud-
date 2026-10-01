@@ -119,6 +119,28 @@
     if (passed < checks.length) verdict = (m.dscr !== null && m.dscr < 1) || passed <= 1 ? 'Not a good deal' : 'Borderline';
     return { verdict, passed, total: checks.length, checks };
   }
+  // Ranks deals against the owner's targets: verdict first, then targets met, then IRR, DSCR, cap rate.
+  function rankDeals(items, criteria) {
+    const rank = { 'Good deal': 2, Borderline: 1, 'Not a good deal': 0 };
+    const rows = items.map((it, index) => {
+      const ev = evaluate(it.metrics, criteria), m = it.metrics;
+      return { index, name: it.name, equity: it.equity, m, ev, key: [rank[ev.verdict], ev.passed, m.irr === null ? -9 : m.irr, m.dscr === null ? -9 : m.dscr, m.capRate] };
+    });
+    const cmp = (a, b) => { for (let i = 0; i < a.key.length; i++) if (a.key[i] !== b.key[i]) return b.key[i] - a.key[i]; return 0; };
+    const ranked = rows.slice().sort(cmp);
+    const w = ranked[0], r = ranked[1];
+    const closeCall = !!r && w.key[0] === r.key[0] && w.key[1] === r.key[1] && Math.abs((w.m.irr ?? -9) - (r.m.irr ?? -9)) < 0.01 && Math.abs((w.m.dscr ?? 0) - (r.m.dscr ?? 0)) < 0.1;
+    const reasons = [];
+    if (r) {
+      if (w.ev.passed !== r.ev.passed) reasons.push(`meets ${w.ev.passed} of ${w.ev.total} of your targets (${r.name}: ${r.ev.passed})`);
+      const d = (label, a, b, fmt, higher = true) => { if (a !== null && b !== null && (higher ? a > b : a < b)) reasons.push(`${label} ${fmt(a)} vs ${fmt(b)}`); };
+      d('IRR', w.m.irr, r.m.irr, (v) => (v * 100).toFixed(1) + '%');
+      d('cap rate', w.m.capRate, r.m.capRate, (v) => (v * 100).toFixed(2) + '%');
+      d('debt coverage', w.m.dscr, r.m.dscr, (v) => v.toFixed(2) + 'x');
+      d('cash needed', w.equity, r.equity, (v) => '$' + Math.round(v).toLocaleString(), false);
+    }
+    return { ranked, winner: w, closeCall, reasons: reasons.slice(0, 4) };
+  }
   // Reads pasted listing-page text (no network). Returns recognised fields + estimated underwriting boxes.
   function parseListing(text, url) {
     const t = String(text || '').replace(/\r/g, '');
@@ -179,5 +201,5 @@
     out.uw = uw;
     return out;
   }
-  return { DEFAULTS, DEFAULT_CRITERIA, analyze, maxPrice, portfolio, irr, monthlyPayment, evaluate, parseListing };
+  return { DEFAULTS, DEFAULT_CRITERIA, analyze, maxPrice, portfolio, irr, monthlyPayment, evaluate, rankDeals, parseListing };
 });

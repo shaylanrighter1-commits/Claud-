@@ -279,3 +279,17 @@ test('listing parser handles residential-portal style text (synthetic samples), 
   const c = F.parseListing('Great fourplex at 55 Oak Lane, Fresno, CA 93721 listed at Asking Price: $640,000. Units: 4');
   assert.equal(c.units, 4); assert.equal(c.address, '55 Oak Lane, Fresno, CA 93721');
 });
+
+test('compare ranking picks the stronger deal and flags weak or tied groups', () => {
+  const F = require('../private-ui/finance.js');
+  const mk = (name, o) => { const r = F.analyze(o); return { name, metrics: r.metrics, equity: r.equity }; };
+  const marion = mk('Marion 12', { units: 12, avgRent: 950, otherIncome: 25, purchasePrice: 1350000, capex: 60000, taxes: 16800, insurance: 8400, utilities: 10800, repairs: 12000, payroll: 0, admin: 4800, mgmtPct: 6, ltvPct: 65, ratePct: 6.75, exitCapPct: 6.5 });
+  const winch = mk('Winchester', { units: 12, avgRent: 947, otherIncome: 0, vacancyPct: 5, purchasePrice: 840000, capex: 36000, taxes: 24000, insurance: 7200, utilities: 9000, repairs: 8400, payroll: 0, admin: 2400, mgmtPct: 6, ltvPct: 65, ratePct: 6.75, exitCapPct: 7.5 });
+  const r = F.rankDeals([marion, winch]);
+  assert.equal(r.winner.name, 'Winchester'); assert.equal(r.closeCall, false); assert.ok(r.reasons.length >= 1);
+  assert.equal(F.rankDeals([winch, marion]).winner.name, 'Winchester');          // order does not matter
+  const weakB = mk('Weaker', { units: 12, avgRent: 900, otherIncome: 0, purchasePrice: 1350000, capex: 60000, taxes: 16800, insurance: 8400, utilities: 10800, repairs: 12000, payroll: 0, admin: 4800, mgmtPct: 6, ltvPct: 65, ratePct: 6.75, exitCapPct: 6.5 });
+  const bad = F.rankDeals([marion, weakB]);
+  assert.equal(bad.winner.ev.verdict, 'Not a good deal');                          // UI shows "no clear winner"
+  assert.equal(F.rankDeals([winch, winch]).closeCall, true);                       // identical deals are a close call
+});

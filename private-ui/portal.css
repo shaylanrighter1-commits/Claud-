@@ -36,3 +36,4 @@ input[type=checkbox]{width:auto}
 input,select,textarea{font-weight:400}
 [hidden]{display:none!important}
 .verdict{border-width:2px}.v-good{border-color:var(--ok)}.v-mid{border-color:var(--accent)}.v-bad{border-color:var(--bad)}.verdict.v-good>b{color:var(--ok)}.verdict.v-mid>b{color:var(--accent)}.verdict.v-bad>b{color:var(--bad)}.verdict>b{font-size:20px}span.tag.v-good{color:var(--ok);border-color:var(--ok)}span.tag.v-mid{color:var(--accent);border-color:var(--accent)}span.tag.v-bad{color:var(--bad);border-color:var(--bad)}
+.best{color:var(--ok);font-weight:700}

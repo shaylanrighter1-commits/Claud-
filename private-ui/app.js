@@ -225,10 +225,28 @@ views.compare = async () => {
     const sel = props.filter((p) => picks.some((c) => c.firstChild.checked && +c.firstChild.value === p.id));
     if (sel.length < 2) return box.replaceChildren(h('p', { class: 'muted' }, 'Select two or more properties.'));
     const res = sel.map((p) => ({ p, r: F.analyze(p.uw) }));
-    const rows = [['Verdict', (x) => F.evaluate(x.r.metrics, crit).verdict], ['Stage', (x) => x.p.stage], ['Purchase price', (x) => usd(x.r.inputs.purchasePrice)], ['Units', (x) => $(x.r.inputs.units)], ['Price / unit', (x) => usd(x.r.metrics.pricePerUnit)], ['NOI (Yr 1)', (x) => usd(x.r.metrics.noi)],
-      ['Cap rate', (x) => pct(x.r.metrics.capRate, 2)], ['DSCR', (x) => x2(x.r.metrics.dscr)], ['Cash-on-cash', (x) => pct(x.r.metrics.cashOnCash)], ['Equity required', (x) => usd(x.r.equity)],
-      ['IRR', (x) => pct(x.r.metrics.irr)], ['Equity multiple', (x) => x2(x.r.metrics.equityMultiple)], ['Break-even occupancy', (x) => pct(x.r.metrics.breakevenOccupancy)], ['Expense ratio', (x) => pct(x.r.metrics.expenseRatio)]];
-    box.replaceChildren(table([{ label: 'Metric', key: 0 }, ...res.map((x, i) => ({ label: x.p.name, num: 1, render: (r) => r[i + 1] }))], rows.map(([l, fn]) => [l, ...res.map(fn)])));
+    const rk = F.rankDeals(res.map((x) => ({ name: x.p.name, metrics: x.r.metrics, equity: x.r.equity })), crit);
+    const win = rk.winner;
+    // [label, text, numeric value, better] ; better = 'high' | 'low' | null (no highlight)
+    const rows = [
+      ['Verdict', (x) => F.evaluate(x.r.metrics, crit).verdict, null, null], ['Stage', (x) => x.p.stage, null, null], ['Purchase price', (x) => usd(x.r.inputs.purchasePrice), null, null], ['Units', (x) => $(x.r.inputs.units), null, null],
+      ['Price / unit', (x) => usd(x.r.metrics.pricePerUnit), (x) => x.r.metrics.pricePerUnit, 'low'], ['NOI (Yr 1)', (x) => usd(x.r.metrics.noi), (x) => x.r.metrics.noi, 'high'],
+      ['Cap rate', (x) => pct(x.r.metrics.capRate, 2), (x) => x.r.metrics.capRate, 'high'], ['DSCR', (x) => x2(x.r.metrics.dscr), (x) => x.r.metrics.dscr, 'high'], ['Cash-on-cash', (x) => pct(x.r.metrics.cashOnCash), (x) => x.r.metrics.cashOnCash, 'high'],
+      ['Equity required', (x) => usd(x.r.equity), (x) => x.r.equity, 'low'], ['IRR', (x) => pct(x.r.metrics.irr), (x) => x.r.metrics.irr, 'high'], ['Equity multiple', (x) => x2(x.r.metrics.equityMultiple), (x) => x.r.metrics.equityMultiple, 'high'],
+      ['Break-even occupancy', (x) => pct(x.r.metrics.breakevenOccupancy), (x) => x.r.metrics.breakevenOccupancy, 'low'], ['Expense ratio', (x) => pct(x.r.metrics.expenseRatio), (x) => x.r.metrics.expenseRatio, 'low']];
+    const cell = (x, i, [, text, val, better]) => {
+      let star = false;
+      if (val && better) { const vs = res.map(val).map((v) => (v === null || !isFinite(v) ? null : v)); const ok = vs.filter((v) => v !== null); if (ok.length) { const best = better === 'high' ? Math.max(...ok) : Math.min(...ok); star = vs[i] === best && new Set(ok).size > 1; } }
+      return h('span', { class: star ? 'best' : '' }, text(x) + (star ? ' ★' : ''));
+    };
+    const vclass = verdictClass(win.ev.verdict);
+    const none = win.ev.verdict === 'Not a good deal';
+    const banner = h('div', { class: 'panel verdict ' + vclass },
+      h('b', {}, (none ? '⚠ No clear winner: ' : '★ Best pick: ') + win.name),
+      h('p', {}, rk.closeCall ? 'It is a close call: the top deals score almost the same on your targets.' : none ? 'None of these meet your targets. This is the least weak of the group.' : `${win.name} is the strongest of the ${res.length} on your targets.`),
+      rk.reasons.length ? h('p', { class: 'muted' }, 'Why: ' + rk.reasons.join('; ') + '.') : null,
+      h('p', { class: 'muted' }, 'Ranking uses your saved targets, then IRR, debt coverage and cap rate. It only reflects the numbers entered, so verify rents and expenses first.'));
+    box.replaceChildren(banner, table([{ label: 'Metric', key: 0 }, ...res.map((x, i) => ({ label: (i === win.index ? '★ ' : '') + x.p.name, num: 1, render: (r) => r[i + 1] }))], rows.map((row) => [row[0], ...res.map((x, i) => cell(x, i, row))])));
   }
   main.append(h('h2', {}, 'Property comparison'), h('p', { class: 'conf' }, 'Confidential'), h('div', { class: 'panel' }, picks.length ? picks : h('p', { class: 'muted' }, 'Add properties with underwriting first.')), box);
   draw();
