@@ -119,6 +119,7 @@ views.properties = async () => {
   main.append(h('h2', {}, 'Properties & opportunities'), h('p', { class: 'conf' }, 'Confidential — proprietary pipeline'), can('analyst') && h('div', { class: 'row' }, h('button', { onclick: () => editProperty() }, 'Add property')));
   main.append(table([
     { label: 'Name', render: (p) => h('a', { href: '#', onclick: (e) => { e.preventDefault(); editProperty(p); } }, p.name) }, { label: 'Stage', key: 'stage' }, { label: 'Address', key: 'address' },
+    { label: 'Listing', render: (p) => (p.listingUrl && /^https?:\/\//i.test(p.listingUrl) ? h('a', { href: p.listingUrl, target: '_blank', rel: 'noopener noreferrer' }, 'Open ↗') : '') },
     { label: 'Asking', num: 1, render: (p) => usd(p.askingPrice) }, { label: 'Target price', num: 1, render: (p) => usd(p.targetPrice) },
     { label: 'Cap @ target', num: 1, render: (p) => (p.uw ? pct(F.analyze({ ...p.uw, purchasePrice: p.targetPrice || p.uw.purchasePrice }).metrics.capRate, 2) : '—') },
     { label: 'IRR', num: 1, render: (p) => (p.uw ? pct(F.analyze(p.uw).metrics.irr) : '—') },
@@ -135,7 +136,7 @@ function editProperty(p = {}) {
     set('name', r.name); set('address', r.address); set('askingPrice', r.askingPrice); set('source', r.source);
     for (const [k, v] of Object.entries(r.uw)) set(k, v);
     const extra = [r.capRate && `listing cap rate ${r.capRate}%`, r.grm && `GRM ${r.grm}`, r.occupancy && `occupancy ${r.occupancy}%`, r.grossSf && `${r.grossSf.toLocaleString()} sq ft`, r.yearBuilt && `built ${r.yearBuilt}`].filter(Boolean).join(', ');
-    set('notes', `Auto-filled from a listing${extra ? ' (' + extra + ')' : ''}.\nESTIMATED, not from the offering memorandum: ${r.estimated.join('; ') || 'none'}.\nVerify rents and expenses before relying on the verdict.`);
+    set('notes', `${r.listingUrl ? 'Listing: ' + r.listingUrl + '\n' : ''}Auto-filled from a listing${extra ? ' (' + extra + ')' : ''}.\nESTIMATED, not from the offering memorandum: ${r.estimated.join('; ') || 'none'}.\nVerify rents and expenses before relying on the verdict.`);
     qfMsg.className = 'ok'; qfMsg.textContent = `Filled: ${r.found.join(', ')}. Estimated: ${r.estimated.join(', ') || 'nothing'}. Review the boxes below, then Save.`;
   };
   const autoFill = async () => {
