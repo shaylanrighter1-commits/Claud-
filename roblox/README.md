@@ -17,6 +17,12 @@ STATUS: READY
 3. `[ AUTO BUILD ]`. `[ STOP ]` stops at once. If it stops because of a problem, fix it and press the same
    button again: it now says `[ RESUME x/y ]` and carries on with the same count (nothing is placed twice).
 4. RightShift hides / shows the menu. Click the STATUS line to copy the debug log.
+5. **You may move the mouse while it builds.** It takes the cursor back for every click (so the cursor jumps), and
+   keeps going. It builds fastest if you leave the mouse alone. It only pauses if the mouse is in the way of one
+   click for 20 seconds in a row, or stays locked (first person / shift-lock); then you press `[ RESUME ]`.
+   Turning the camera with the right mouse button is waited out. The game aims with the cursor, so if you move the
+   mouse at the exact moment of a click, a block can land in a neighbouring cell. If that cell is inside the orange
+   area it is tolerated (3 times per build, that cell is retried); outside the area it always stops the build.
 
 ## What it never does
 * Never walks, jumps or teleports your character. Never touches your camera.
@@ -47,9 +53,10 @@ Failure tags: `[ITEM] [INPUT] [AIM] [RANGE] [PLACEMENT] [DETECTION]`.
 **Tested outside Roblox (simulated, Lua 5.5 via `lupa`):**
 * `python3 roblox/tests/run_core_tests.py`: 42 tests of the decision logic embedded in the script (build order,
   checking a placed block's cell, counters, duplicate protection, range learning, stop / resume).
-* `python3 roblox/tests/run_glue_tests.py`: 20 tests that run the script's real `placeCell` / `runJob` / `autoBuild`
+* `python3 roblox/tests/run_glue_tests.py`: 30 tests that run the script's real `placeCell` / `runJob` / `autoBuild`
   / `stop` against a simulated world: small areas, existing blocks, hidden cells, island edges, out-of-range,
-  interrupted builds, wrong placement, out of blocks, deselected block, grid offset.
+  interrupted builds, wrong placement, out of blocks, deselected block, grid offset, and a moving mouse (cursor knocked
+  off the target, mouse locked for a camera turn, a block landing next door because the mouse moved).
 * Mutation checks: deliberately breaking the logic makes these tests fail (a few redundant safety checks are
   intentionally duplicated and not individually detectable).
 * Static checks: block balance, no undefined names, no remote / hook references.

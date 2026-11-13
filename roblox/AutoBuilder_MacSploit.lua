@@ -8,7 +8,8 @@
 	  4. [ AUTO BUILD ]. Cells are filled in one fixed order, bottom layer first. Cells that already hold a
 	     block are skipped. [ STOP ] stops at once. If it stops because of a problem, fix it (get closer, tilt
 	     the camera, get more blocks) and press the same button again - it says RESUME and carries on.
-	  RightShift hides / shows the menu.   Don't touch the mouse while it is building.
+	  RightShift hides / shows the menu.   You may move the mouse while it builds: it takes the cursor back for
+	  every click (so the cursor will jump around), and builds fastest if you leave it alone.
 
 	WHAT IT NEVER DOES
 	  It never walks, jumps or teleports your character and never touches your camera. It never calls the game's
@@ -32,7 +33,7 @@
 	banned, and automated clicking may also break the game's own rules. Use at your own risk.
 ]]
 
-local VERSION = "v5 final: no walking / no camera"
+local VERSION = "v5.1 mouse-tolerant"
 
 ----------------------------------------------------------------------------------------------
 -- SETTINGS
@@ -49,6 +50,10 @@ local CONFIG = {
 	PLACE_DELAY = 0.08, -- pause between blocks (seconds); every block is still verified before the next one
 	PLACE_TIMEOUT = 1.6, -- how long to wait for a block to appear after a click
 	MAX_FAILS = 3, -- this many failed blocks in a row stops the build
+	MOUSE_PATIENCE = 20, -- seconds the mouse may keep getting in the way of ONE click (you moving it, a camera turn)
+	-- before the build pauses. Moving the mouse is allowed: the cursor is simply taken back for the next click.
+	MAX_STRAYS = 3, -- blocks that landed in a neighbouring cell INSIDE the area because the mouse moved mid-click
+	-- are tolerated this many times per build (the cell is retried). Outside the area it always stops.
 
 	OCC_MIN_FRACTION = 0.45, -- a part counts as a "block" if every side >= this * grid size ...
 	OCC_MAX_MULT = 2.01, -- ... and no side is longer than this * grid size
@@ -1403,7 +1408,7 @@ end
 ----------------------------------------------------------------------------------------------
 -- 8. Input: move the mouse and click, the way you would (verified, never blind)
 ----------------------------------------------------------------------------------------------
-local Input = { method = nil, off = Vector2.new(0, 0) }
+local Input = { method = nil, off = Vector2.new(0, 0), learn = false }
 function Input.detect()
 	local ok, vim = pcall(function()
 		return game:GetService("VirtualInputManager")
@@ -1447,9 +1452,10 @@ function Input.moveTo(x, y)
 		if math.abs(err.X) <= 3 and math.abs(err.Y) <= 3 then
 			return true
 		end
-		-- Learn the offset between what we send and where the cursor lands - but only once the SAME
-		-- error shows up twice in a row, so one late / stale reading can't poison it.
-		if lastErr and (err - lastErr).Magnitude <= 3 then
+		-- Learn the offset between what we send and where the cursor lands - only in the start-up self test
+		-- (never while a build runs: you moving the mouse would be mistaken for an offset) and only once
+		-- the SAME error shows up twice in a row, so one late / stale reading can't poison it.
+		if Input.learn and lastErr and (err - lastErr).Magnitude <= 3 then
 			Input.off = Input.off + err
 			lastErr = nil
 			if Input.off.Magnitude > 200 then
@@ -1460,7 +1466,9 @@ function Input.moveTo(x, y)
 			lastErr = err
 		end
 	end
-	Input.off = Vector2.new(0, 0)
+	if Input.learn then
+		Input.off = Vector2.new(0, 0)
+	end
 	return false
 end
 
@@ -1496,10 +1504,12 @@ function Input.selfTest()
 	local cam = workspace.CurrentCamera
 	local view = cam and cam.ViewportSize or Vector2.new(1280, 720)
 	local x, y = math.floor(view.X * 0.5), math.floor(view.Y * 0.6)
+	Input.learn = true
 	local ok, moved = pcall(Input.moveTo, x, y)
 	if (not ok or not moved) and Input.switchToExecutor() then
 		ok, moved = pcall(Input.moveTo, x, y)
 	end
+	Input.learn = false
 	if ok and moved then
 		return true
 	end
@@ -1781,54 +1791,51 @@ local function ghostCheck(aim, cell)
 	return false, string.format("the game's own placement preview is at cell (%d,%d,%d), not the target (%d,%d,%d)", gc.x, gc.y, gc.z, cell.x, cell.y, cell.z)
 end
 
--- returns "placed" | "failed" | "noaim" | "nocursor" | "misplaced" | "broke" | "unseen" | "stopped", extra
---   failed    the click reached the game but no block appeared (the game / server didn't place one)
---   broke     a block DISAPPEARED when I clicked (the held item removes blocks instead of placing)
---   unseen    the block count dropped but no new block was seen
---   misplaced a block appeared, but not in the cell I aimed at
--- `run` is the build this click belongs to: if STOP is pressed (runId changes) NO click is sent.
-local function placeCell(cell, run)
-	local s = S.grid.size
-	local areaMin, areaMax = S.min, S.max -- (the selection can change while a click is in flight)
-	if not (areaMin and areaMax) then
-		return "stopped"
-	end
-	if UIS.MouseBehavior ~= Enum.MouseBehavior.Default then
-		return "nocursor", "the mouse is locked (shift-lock / first person) - switch to a free cursor"
-	end
+-- Is the cursor still where I put it? (It isn't if you moved the mouse in the meantime.)
+local function cursorAt(x, y)
+	return (UIS:GetMouseLocation() - Vector2.new(x, y)).Magnitude <= 4
+end
 
-	-- 1) AIM at a visible face next to the cell. If the game's own placement preview is readable it must
-	--    point at THIS cell, otherwise that aim is rejected and another face is tried. No click until then.
+-- ONE attempt at aiming: put the cursor on a visible face next to the cell and check that the game's own
+-- placement preview (if I can read it) points at THIS cell. Returns the aim, or nil + kind + why:
+--   "disturbed"  you moved the mouse / turned the camera, so the cursor isn't where I put it. NOT a fault:
+--                the caller just tries again (your mouse movement never stops a build)
+--   "noaim"      no visible face to click for this cell right now
+--   "nocursor"   the executor's mouse control itself failed
+--   "stopped"    STOP was pressed
+local function aimOnce(cell, run)
+	local s = S.grid.size
+	if UIS.MouseBehavior ~= Enum.MouseBehavior.Default then
+		return nil, "disturbed", "the mouse is locked (camera turn / shift-lock / first person)"
+	end
 	local candidates, why = findAims(cell, 4)
 	if not candidates then
-		return "noaim", why
+		return nil, "noaim", why
 	end
-	local aim
 	for _, candidate in ipairs(candidates) do
 		if S.runId ~= run then
-			return "stopped"
+			return nil, "stopped"
 		end
 		local okMove, moved = pcall(Input.moveTo, candidate.x, candidate.y)
 		if not okMove then
 			log("ERROR", "mouse move failed:", moved)
 			if Input.switchToExecutor() then
-				return "failed"
+				return nil, "disturbed", "switched to the executor's mouse functions"
 			end
-			return "nocursor", "this executor's mouse control errored (see console)"
+			return nil, "nocursor", "this executor's mouse control errored (see console)"
 		end
 		if not moved then
-			if Input.switchToExecutor() then
-				return "failed"
-			end
-			return "nocursor", "couldn't move the mouse to the target"
+			return nil, "disturbed", "the cursor didn't stay where I put it"
 		end
 		task.wait(0.1) -- let the game update its placement preview for the new cursor position
 		if S.runId ~= run then
-			return "stopped"
+			return nil, "stopped"
+		end
+		if not cursorAt(candidate.x, candidate.y) then
+			return nil, "disturbed", "the cursor moved while the game was updating its preview"
 		end
 		local good, ghostWhy, off = ghostCheck(candidate, cell)
 		if good then
-			aim = candidate
 			-- The preview is the game's own lattice. If it is a small fraction of a block off mine, take
 			-- it over (once per job, before any block is placed) instead of placing off-grid.
 			if off and S.placed == 0 and not S.ghostAdopted then
@@ -1841,37 +1848,78 @@ local function placeCell(cell, run)
 					Preview.setArea(S.min, S.max)
 				end
 			end
-			break
+			return candidate
 		end
 		why = ghostWhy
 	end
-	if not aim then
-		return "noaim", why
-	end
-	local center = cellCenter(cell)
+	return nil, "noaim", why
+end
 
-	-- 2) CLICK. Last STOP check; nothing yields between it and the click.
-	if S.runId ~= run then
+-- returns "placed" | "failed" | "noaim" | "nocursor" | "misplaced" | "broke" | "unseen" | "stopped", extra
+--   failed    the click reached the game but no block appeared (the game / server didn't place one)
+--   broke     a block DISAPPEARED when I clicked (the held item removes blocks instead of placing)
+--   unseen    the block count dropped but no new block was seen
+--   misplaced a block appeared, but not in the cell I aimed at
+-- `run` is the build this click belongs to: if STOP is pressed (runId changes) NO click is sent.
+-- Moving your mouse never stops a build: if the cursor was moved off the target, aiming starts again
+-- (up to CONFIG.MOUSE_PATIENCE seconds for one click).
+local function placeCell(cell, run)
+	local s = S.grid.size
+	local areaMin, areaMax = S.min, S.max -- (the selection can change while a click is in flight)
+	if not (areaMin and areaMax) then
 		return "stopped"
 	end
-	refreshOverlapFilter()
-	local before = nearbyBlocks(center)
-	local ownedBefore = readOwned()
-	Watch.list, Watch.active = {}, true
-	Input.seen, Input.seenProcessed, Input.expecting = false, false, true
-	local okClick, clicked = pcall(Input.click, aim.x, aim.y)
-	task.wait(0.03)
-	if not okClick or clicked == false then
-		Watch.active, Input.expecting = false, false
-		if not okClick then
-			log("ERROR", "mouse click failed:", clicked)
-			if Input.switchToExecutor() then
-				return "failed"
-			end
-			return "nocursor", "this executor's mouse click errored (see console)"
+
+	local aim, center, before, ownedBefore
+	local giveUpAt = nil
+	while true do
+		if S.runId ~= run then
+			return "stopped"
 		end
-		return "nocursor", "the cursor moved away from the target, so I didn't click"
+		-- 1) AIM. No click until the cursor is on the target and the preview (if readable) points at this cell.
+		local got, kind, why = aimOnce(cell, run)
+		if got then
+			aim = got
+			center = cellCenter(cell)
+			-- 2) CLICK. Last STOP check; nothing yields between it and the click. Input.click looks at the
+			--    cursor once more and sends nothing if it is not on the target.
+			if S.runId ~= run then
+				return "stopped"
+			end
+			refreshOverlapFilter()
+			before = nearbyBlocks(center)
+			ownedBefore = readOwned()
+			Watch.list, Watch.active = {}, true
+			Input.seen, Input.seenProcessed, Input.expecting = false, false, true
+			local okClick, clicked = pcall(Input.click, aim.x, aim.y)
+			if okClick and clicked ~= false then
+				break
+			end
+			Watch.active, Input.expecting = false, false
+			if not okClick then
+				log("ERROR", "mouse click failed:", clicked)
+				if not Input.switchToExecutor() then
+					return "nocursor", "this executor's mouse click errored (see console)"
+				end
+			end
+			kind, why = "disturbed", "the cursor moved just before the click, so I didn't click"
+		end
+		if kind == "stopped" then
+			return "stopped"
+		elseif kind ~= "disturbed" then
+			return kind, why -- "noaim" (cell deferred) or "nocursor" (executor problem)
+		end
+		-- you moved the mouse (or turned the camera): wait a moment and take the cursor back
+		local now = os.clock()
+		giveUpAt = giveUpAt or (now + CONFIG.MOUSE_PATIENCE)
+		if now > giveUpAt then
+			return "nocursor", tostring(why) .. " - for " .. CONFIG.MOUSE_PATIENCE .. " seconds. Hold the mouse still for a moment"
+		end
+		task.wait(0.05)
 	end
+	task.wait(0.03)
+	-- did the cursor move DURING the click? (then a block that lands next door is explained by the mouse, not the grid)
+	local drifted = not cursorAt(aim.x, aim.y)
 
 	-- 3) WATCH what appears. A block counts only if it is opaque, block-sized and NEW.
 	local fresh, removed, settleUntil = {}, false, nil
@@ -1926,12 +1974,19 @@ local function placeCell(cell, run)
 	})
 	if verdict.kind == "misplaced" then
 		local l = verdict.landed
+		if drifted and verdict.why ~= "extra" and not verdict.outside and (S.strays or 0) < CONFIG.MAX_STRAYS then
+			-- You moved the mouse while the click was being sent and the block went into ANOTHER cell of the
+			-- selected area. It is not counted, nothing is placed outside the outline, and this cell is retried.
+			S.strays = (S.strays or 0) + 1
+			log("WARN", string.format("mouse moved during the click: block landed in cell (%d,%d,%d) instead of (%d,%d,%d), inside the area - retrying (%d of %d allowed)", l.x, l.y, l.z, cell.x, cell.y, cell.z, S.strays, CONFIG.MAX_STRAYS))
+			return "failed"
+		end
 		if verdict.why == "extra" then
 			return "misplaced", string.format("more than one new block appeared after a single click (one in cell (%d,%d,%d))%s", l.x, l.y, l.z, verdict.outside and " - OUTSIDE the selected area" or "")
 		end
 		return "misplaced", string.format(
-			"a block landed in cell (%d,%d,%d) instead of (%d,%d,%d)%s", l.x, l.y, l.z, cell.x, cell.y, cell.z,
-			verdict.outside and " - OUTSIDE the selected area" or ""
+			"a block landed in cell (%d,%d,%d) instead of (%d,%d,%d)%s%s", l.x, l.y, l.z, cell.x, cell.y, cell.z,
+			verdict.outside and " - OUTSIDE the selected area" or "", drifted and " (the mouse moved while clicking)" or ""
 		)
 	end
 	if verdict.adopt then
@@ -2066,6 +2121,7 @@ end
 
 local function newJob()
 	S.ghostAdopted = false
+	S.strays = 0
 	return {
 		order = Core.buildOrder(S.min, S.max, "z", farRowsFirst()),
 		placed = 0, total = 0, placedSet = {}, reach = Core.newReach(), todo = {}, resumable = false,
@@ -2369,7 +2425,7 @@ local function autoBuild()
 		S.placed, S.total = 0, 0 -- a new job: the counter always starts from zero
 	end
 	if S.verifiedName == norm(S.block.name) then
-		status(string.format("%s with %s x%d.", resuming and "Resuming" or "Building", S.block.name, owned), "info")
+		status(string.format("%s with %s x%d. (Moving the mouse is fine.)", resuming and "Resuming" or "Building", S.block.name, owned), "info")
 	else
 		status(string.format("Holding %s x%d. Placement NOT verified yet - the first block will confirm it.", S.block.name, owned), "info")
 	end

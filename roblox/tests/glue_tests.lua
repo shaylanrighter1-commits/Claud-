@@ -87,6 +87,16 @@ V3.__unm = function(a) return V3.new(-a.x, -a.y, -a.z) end
 V3.__eq = function(a, b) return a.x == b.x and a.y == b.y and a.z == b.z end
 function V3.new(x, y, z) return setmetatable({ x = x or 0, y = y or 0, z = z or 0 }, V3) end
 
+local V2 = {}
+V2.__index = function(t, k)
+	if k == "X" then return rawget(t, "x") elseif k == "Y" then return rawget(t, "y")
+	elseif k == "Magnitude" then return math.sqrt(t.x * t.x + t.y * t.y) end
+	return nil
+end
+V2.__sub = function(a, b) return V2.new(a.x - b.x, a.y - b.y) end
+V2.__add = function(a, b) return V2.new(a.x + b.x, a.y + b.y) end
+function V2.new(x, y) return setmetatable({ x = x or 0, y = y or 0 }, V2) end
+
 local function fakePart(pos, size)
 	return {
 		Position = pos, Size = V3.new(size, size, size), Transparency = 0, CanCollide = true, Parent = true, Name = "Part",
@@ -106,6 +116,7 @@ local function boot()
 	local now = 0
 	local queue = {}
 	local warnings = {}
+	local W
 	local task = {}
 	function task.spawn(f, ...)
 		local co = coroutine.create(f)
@@ -115,6 +126,10 @@ local function boot()
 	end
 	function task.wait(t)
 		now = now + (t or 0.03)
+		if W and W.kicks > 0 then -- "you" move the mouse during the next few waits
+			W.kicks = W.kicks - 1
+			W.cursor = W.cursor + V2.new(40, 0)
+		end
 		coroutine.yield()
 		return t or 0.03
 	end
@@ -132,7 +147,7 @@ local function boot()
 		type = type, error = error, assert = assert, setmetatable = setmetatable, getmetatable = getmetatable,
 		rawget = rawget, rawset = rawset, unpack = table.unpack, debug = debug, utf8 = utf8,
 		tick = function() return now end, time = function() return now end,
-		game = anything(), workspace = anything(), Vector3 = V3, Enum = anything(),
+		game = anything(), workspace = anything(), Vector3 = V3, Vector2 = V2, Enum = anything(),
 	}, { __index = function(_, k) if type(k) == "string" and k:match("^[A-Z]") then return anything() end return nil end })
 	env.Instance = { new = function() return anything() end }
 
@@ -142,7 +157,8 @@ local function boot()
 	queue = {} -- forget the script's own background loop (the 4 Hz tick); the tests drive what they need
 
 	local T = genv.__T
-	local W = {
+	W = {
+		cursor = V2.new(0, 0), kicks = 0, moveFails = 0, clickRefusals = 0, lockedUntil = -1, driftCells = {},
 		filled = {}, hidden = {}, refuse = {}, wrongPlace = {}, owned = 1000, range = 1e9, char = V3.new(0, 3, 0),
 		shift = V3.new(0, 0, 0), island = nil, ids = {}, clicks = {}, clicksOnFilled = 0, placedCount = 0,
 		stopAfter = nil, unequipAfter = nil, countersBroken = nil, warnings = warnings, T = T,
@@ -163,7 +179,15 @@ local function boot()
 	T.set("calibrateNear", function() return false end)
 	T.set("cellOccupied", function(c) return W.filled[key(c)] == true end)
 	T.set("myParts", function() return nil, { Position = W.char } end)
-	T.set("UIS", { MouseBehavior = env.Enum.MouseBehavior.Default })
+	local LOCKED = {}
+	T.set("UIS", setmetatable({ GetMouseLocation = function() return W.cursor end }, {
+		__index = function(_, k)
+			if k == "MouseBehavior" then
+				if now < W.lockedUntil then return LOCKED end -- e.g. while you turn the camera with the right mouse button
+				return env.Enum.MouseBehavior.Default
+			end
+		end,
+	}))
 	T.set("findAims", function(cell)
 		local k = key(cell)
 		if W.hidden[k] then
@@ -178,8 +202,23 @@ local function boot()
 	T.Input.method = "simulated"
 	T.Input.selfTest = function() return true end
 	T.Input.switchToExecutor = function() return false end
-	T.Input.moveTo = function() return true end
-	T.Input.click = function(x)
+	T.Input.moveTo = function(x, y)
+		if W.moveFails > 0 then
+			W.moveFails = W.moveFails - 1
+			W.cursor = V2.new(x + 50, y) -- you moved it again in the middle of my move
+			return false
+		end
+		W.cursor = V2.new(x, y)
+		return true
+	end
+	T.Input.click = function(x, y)
+		if W.clickRefusals > 0 then
+			W.clickRefusals = W.clickRefusals - 1
+			return false -- the cursor was moved in the last instant before the click
+		end
+		if (W.cursor - V2.new(x, y)).Magnitude > 4 then
+			return false -- exactly like the real one: nothing is sent unless the cursor is on the target
+		end
 		local cell = W.ids[x - 100]
 		local k = key(cell)
 		W.clicks[#W.clicks + 1] = k
@@ -195,8 +234,12 @@ local function boot()
 			return true -- the game places nothing
 		end
 		local landed = cell
-		if W.wrongPlace[k] then
+		if W.wrongPlace[k] or W.driftCells[k] then
 			landed = { x = cell.x + 1, y = cell.y, z = cell.z }
+		end
+		if W.driftCells[k] then
+			W.cursor = W.cursor + V2.new(60, 0) -- you moved the mouse while the click was being sent
+			W.driftCells[k] = nil -- (it happens once for that cell)
 		end
 		if W.filled[key(landed)] then
 			return true
@@ -412,6 +455,96 @@ test("interrupted again and again (every 2 blocks): always exact", function()
 		if W.T.S.state == "done" then break end
 	end
 	eq(W.T.S.state, "done"); eq(W.T.S.placed, 16); eq(#W.clicks, 16)
+end)
+
+print("moving the mouse never stops a build")
+test("the cursor is knocked off the target again and again: it takes it back and carries on", function()
+	local W = boot()
+	W.kicks = 12
+	W.select(A, B33)
+	W.press()
+	local S = W.T.S
+	eq(S.state, "done"); eq(S.placed, 9); eq(#W.clicks, 9)
+	invariants(W, "kicked")
+end)
+test("you hold the mouse away for ages: pauses after the patience limit, says so, resumes when you let go", function()
+	local W = boot()
+	W.kicks = 1000000
+	W.select(A, B33)
+	W.press()
+	local S = W.T.S
+	eq(S.state, "idle"); eq(S.placed, 0); eq(#W.clicks, 0, "nothing may be clicked while the cursor is away")
+	has(S.status, "[INPUT]"); has(S.status, "mouse"); has(S.status, "RESUME")
+	W.kicks = 0
+	W.press()
+	eq(S.state, "done"); eq(S.placed, 9)
+	invariants(W, "held away")
+end)
+test("a camera turn (mouse temporarily locked) is waited out, not an error", function()
+	local W = boot()
+	W.lockedUntil = 3 -- locked for the first 3 seconds
+	W.select(A, B33)
+	W.press()
+	eq(W.T.S.state, "done"); eq(W.T.S.placed, 9)
+	invariants(W, "camera turn")
+end)
+test("the mouse stays locked (first person / shift-lock): pauses with a clear message, never clicks", function()
+	local W = boot()
+	W.lockedUntil = 1e9
+	W.select(A, B33)
+	W.press()
+	eq(W.T.S.state, "idle"); eq(#W.clicks, 0); has(W.T.S.status, "locked")
+end)
+test("a few failed cursor moves (you grabbed the mouse) are retried, not fatal", function()
+	local W = boot()
+	W.moveFails = 6
+	W.select(A, B33)
+	W.press()
+	eq(W.T.S.state, "done"); eq(W.T.S.placed, 9); eq(#W.clicks, 9)
+	invariants(W, "move retries")
+end)
+test("the cursor moves in the last instant before the click: nothing sent, aimed again, build carries on", function()
+	local W = boot()
+	W.clickRefusals = 7
+	W.select(A, B33)
+	W.press()
+	eq(W.T.S.state, "done"); eq(W.T.S.placed, 9); eq(#W.clicks, 9, "refused clicks are not clicks")
+	invariants(W, "click refusals")
+end)
+test("the cursor can't be moved at all: [INPUT] pause after the patience limit, not an endless loop", function()
+	local W = boot()
+	W.moveFails = 1000000
+	W.select(A, B33)
+	W.press()
+	eq(W.T.S.state, "idle"); eq(#W.clicks, 0); has(W.T.S.status, "[INPUT]")
+end)
+test("you move the mouse DURING a click and the block lands in another cell inside the area: not counted, retried, build continues", function()
+	local W = boot()
+	W.char = V3.new(0, 3, 8) -- rows go z=0 first, and everything is within 14 studs
+	W.driftCells["0,0,0"] = true -- the click on (0,0,0) lands in (1,0,0) because the mouse moved
+	W.select(A, B33)
+	W.press()
+	local S = W.T.S
+	eq(S.state, "done"); has(S.status, "Done!")
+	eq(W.placedCount, 9, "every cell of the area got a block")
+	eq(S.placed, 8, "the stray block is not counted as placed in the aimed cell")
+	eq(W.clicksOnFilled, 0); eq(W.countersBroken, nil); noScriptErrors(W)
+end)
+test("a stray that lands OUTSIDE the area still stops the build", function()
+	local W = boot()
+	W.char = V3.new(0, 3, 20)
+	W.driftCells["2,0,1"] = true -- lands in (3,0,1): outside
+	W.select(A, B33)
+	W.press()
+	eq(W.T.S.state, "idle"); has(W.T.S.status, "OUTSIDE the selected area")
+end)
+test("too many strays in one build: stops (it could be a grid problem, not the mouse)", function()
+	local W = boot()
+	W.char = V3.new(0, 3, 8)
+	for _, k in ipairs({ "0,0,0", "2,0,0", "0,0,1", "0,0,2" }) do W.driftCells[k] = true end -- 4 strays, all inside a 5-wide area
+	W.select(A, { x = 4, y = 0, z = 2 })
+	W.press()
+	has(W.T.S.status, "[PLACEMENT]"); eq(W.T.S.state, "idle")
 end)
 
 print("placement problems")
