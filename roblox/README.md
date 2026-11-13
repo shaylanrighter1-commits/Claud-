@@ -1,7 +1,7 @@
 # ABOVE[RUINS] | Auto Builder — MacSploit script
 
 One file: **`AutoBuilder_MacSploit.lua`**. Paste it into MacSploit while you're in the game and Execute.
-No installation, nothing in any Roblox service, no Studio. The status line shows the version (`v3 custom-hotbar`)
+No installation, nothing in any Roblox service, no Studio. The status line shows the version (`v3.1 custom-hotbar`)
 so you can tell you're running the latest file.
 
 > **Status: not yet run in MacSploit or in ABOVE[RUINS].** I can't run either here and I haven't seen the game's
@@ -19,7 +19,7 @@ so you can tell you're running the latest file.
 | Menu | What it does |
 |---|---|
 | **SELECT AREA** | click corner A, then the opposite corner B — the orange outline is exactly what will be filled |
-| **BLOCK: GRASS BLOCK  slot 4** | the item you have selected. Grey word = *detected* only; it turns green **verified** only after a real block has been seen appearing in the world |
+| **BLOCK: GRASS BLOCK  #4 detected** | the item you have selected. Grey word = *detected* only; it turns green **verified** only after a real block has been seen appearing in the world |
 | **NEEDED: 10 \| OWNED: 25** | empty cells left in the area; how many of that block you have (read from the hotbar's "x25") |
 | **AUTO BUILD** | always clickable once an area is selected. Places blocks one at a time; button shows real progress (`BUILDING 3/10`) |
 | **STOP** | stops at once |

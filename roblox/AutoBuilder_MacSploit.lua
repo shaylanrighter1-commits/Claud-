@@ -29,7 +29,7 @@
 	banned, and automated clicking may also break the game's own rules. Use at your own risk.
 ]]
 
-local VERSION = "v3 custom-hotbar"
+local VERSION = "v3.1 custom-hotbar"
 
 ----------------------------------------------------------------------------------------------
 -- SETTINGS
@@ -665,40 +665,48 @@ end
 
 local Hotbar = { slots = nil, why = nil, foundAt = -100, lastDump = nil }
 
+-- A hotbar slot is roughly square-ish and neither tiny nor huge. The limits scale with the screen.
 local function plausibleSlotSize(gui)
 	local sz = gui.AbsoluteSize
-	return sz.X >= 28 and sz.X <= 170 and sz.Y >= 28 and sz.Y <= 170
+	local cam = workspace.CurrentCamera
+	local view = cam and cam.ViewportSize or Vector2.new(1280, 720)
+	local hi = math.max(170, math.min(view.X, view.Y) * 0.25)
+	return sz.X >= 20 and sz.X <= hi and sz.Y >= 20 and sz.Y <= hi
 end
 
--- Find the slots: containers that each hold a visible single-digit label (1-9), grouped by parent.
+-- Find the slots: containers that each hold a visible single-digit label (1-9). The label's own parent is
+-- not always the slot (there may be inner frames), so EVERY plausible ancestor is a candidate and the
+-- group (candidates sharing a parent) with the most distinct slot numbers wins - that's the hotbar row.
 function Hotbar.find()
 	local pg = LocalPlayer:FindFirstChildOfClass("PlayerGui")
 	if not pg then
 		return nil, "no PlayerGui"
 	end
 	local groups, digitLabels = {}, 0
+	local function add(slot, d)
+		if slot and slot:IsA("GuiObject") and plausibleSlotSize(slot) and slot.Parent then
+			local list = groups[slot.Parent]
+			if not list then
+				list = {}
+				groups[slot.Parent] = list
+			end
+			list[#list + 1] = { slot = slot, num = tonumber(d.Text), numLabel = d }
+		end
+	end
 	for _, d in ipairs(pg:GetDescendants()) do
 		if (d:IsA("TextLabel") or d:IsA("TextButton")) and #d.Text == 1 and string.match(d.Text, "^[1-9]$") and not isOurs(d) and guiVisible(d) then
 			digitLabels += 1
-			local slot
-			if plausibleSlotSize(d) and #d:GetChildren() > 0 then
-				slot = d -- the slot itself carries the number (a button with the item drawn inside it)
-			else
-				slot = d.Parent
-				for _ = 1, 3 do
-					if slot and slot:IsA("GuiObject") and plausibleSlotSize(slot) then
-						break
-					end
-					slot = slot and slot.Parent
-				end
+			-- the label itself is the slot only if it's a button-like thing whose parent is NOT slot-sized
+			if plausibleSlotSize(d) and #d:GetChildren() > 0 and not (d.Parent and d.Parent:IsA("GuiObject") and plausibleSlotSize(d.Parent)) then
+				add(d, d)
 			end
-			if slot and slot:IsA("GuiObject") and plausibleSlotSize(slot) and slot.Parent then
-				local list = groups[slot.Parent]
-				if not list then
-					list = {}
-					groups[slot.Parent] = list
+			local anc = d.Parent
+			for _ = 1, 4 do
+				if not anc or anc == pg then
+					break
 				end
-				list[#list + 1] = { slot = slot, num = tonumber(d.Text), numLabel = d }
+				add(anc, d)
+				anc = anc.Parent
 			end
 		end
 	end
@@ -749,7 +757,8 @@ local function readSlot(e)
 	local name, count, nameLabel, countLabel
 	local looseCount, looseLabel
 	for _, d in ipairs(e.slot:GetDescendants()) do
-		if (d:IsA("TextLabel") or d:IsA("TextButton")) and d ~= e.numLabel and d.Text ~= "" and guiVisible(d) then
+		-- (a second copy of the slot number, e.g. a drop-shadow label, is not a count)
+		if (d:IsA("TextLabel") or d:IsA("TextButton")) and d ~= e.numLabel and d.Text ~= "" and d.Text ~= tostring(e.num) and guiVisible(d) then
 			local t = d.Text
 			local c = parseCount(t)
 			if c then
@@ -842,12 +851,13 @@ end
 
 -- Some games also keep the selection in an attribute / value ("EquippedItem", "SelectedSlot", ...).
 local function stateHint(infos)
-	local function match(v)
+	local function match(v, key)
+		local k = string.lower(key)
 		for _, it in ipairs(infos) do
 			if type(v) == "string" and it.name and norm(it.name) == norm(v) then
 				return it
-			elseif type(v) == "number" and it.num == v then
-				return it
+			elseif type(v) == "number" and it.num == v and (string.find(k, "select") or string.find(k, "equip")) then
+				return it -- (a bare number only counts for names like "SelectedSlot", not e.g. "MaxSlots")
 			end
 		end
 	end
@@ -859,7 +869,7 @@ local function stateHint(infos)
 		if holder then
 			for key, v in pairs(holder:GetAttributes()) do
 				if wanted(key) then
-					local it = match(v)
+					local it = match(v, key)
 					if it then
 						return it, "attribute '" .. key .. "'"
 					end
@@ -867,7 +877,7 @@ local function stateHint(infos)
 			end
 			for _, c in ipairs(holder:GetChildren()) do
 				if (c:IsA("StringValue") or c:IsA("IntValue") or c:IsA("NumberValue")) and wanted(c.Name) then
-					local it = match(c.Value)
+					local it = match(c.Value, c.Name)
 					if it then
 						return it, "value '" .. c.Name .. "'"
 					end
@@ -882,17 +892,22 @@ local function ensureSlots(force)
 	local stale = Hotbar.slots == nil
 	if Hotbar.slots then
 		for _, e in ipairs(Hotbar.slots) do
-			if not e.slot.Parent then
+			-- (a GUI detached with Parent = nil keeps its own internal Parent links, so test the whole chain)
+			if not e.slot:IsDescendantOf(game) then
 				stale = true
 				break
 			end
 		end
 	end
-	if stale and os.clock() - Hotbar.foundAt > (force and 0.4 or 3) then
+	local incomplete = Hotbar.slots ~= nil and #Hotbar.slots < 9 and os.clock() - Hotbar.foundAt > 5
+	if (stale or incomplete) and os.clock() - Hotbar.foundAt > (force and 0.4 or 3) then
 		Hotbar.foundAt = os.clock()
 		local slots, why = Hotbar.find()
-		Hotbar.slots, Hotbar.why = slots, why
-		if slots then
+		if slots or stale then
+			Hotbar.slots, Hotbar.why = slots, why
+		end
+		if slots and #slots ~= Hotbar.lastCount then
+			Hotbar.lastCount = #slots
 			log("INFO", "custom hotbar found: " .. #slots .. " slots")
 		end
 	end
@@ -928,7 +943,7 @@ function Hotbar.read(force)
 			maxN += 1
 		end
 	end
-	if maxScore >= 3 and maxN == 1 then
+	if maxScore >= 2 and maxN == 1 then -- (uniqueness is what guards against false positives)
 		for _, it in ipairs(infos) do
 			if it.score == maxScore then
 				chosen, how = it, "highlighted: " .. tostring(it.why)
@@ -965,36 +980,41 @@ function Hotbar.read(force)
 	}, nil, dump
 end
 
--- Find an item by name (for re-reading its count after the game redraws the hotbar)
+-- Find an item by name (for re-reading its count after the game redraws the hotbar).
+-- Returns count, countLabel, found   (found = a slot with that item name exists; count may still be nil)
 function Hotbar.lookup(name, num)
 	local slots = ensureSlots(true)
 	if not slots then
-		return nil
+		return nil, nil, false
 	end
-	local fallbackCount, fallbackLabel
+	local fallbackCount, fallbackLabel, fallbackFound
 	for _, e in ipairs(slots) do
-		if e.slot.Parent then
+		if e.slot:IsDescendantOf(game) then
 			local n, c, _, cl = readSlot(e)
 			if n and norm(n) == norm(name) then
 				if num == nil or e.num == num then
-					return c, cl
+					return c, cl, true
 				end
-				fallbackCount, fallbackLabel = fallbackCount or c, fallbackLabel or cl
+				fallbackCount, fallbackLabel, fallbackFound = fallbackCount or c, fallbackLabel or cl, true
 			end
 		end
 	end
-	return fallbackCount, fallbackLabel
+	return fallbackCount, fallbackLabel, fallbackFound or false
 end
 
--- has the held item left the player's inventory display entirely? (e.g. the last block was used)
+-- Has the held item left the inventory display entirely? (e.g. the last block was used up.)
+-- "Can't tell" (hotbar not readable right now) is NOT the same as gone.
 local function itemGone()
 	local b = S.block
 	if not b then
 		return true
 	end
 	if b.slot then
-		local c, cl = Hotbar.lookup(b.name, nil)
-		return c == nil and cl == nil
+		if not ensureSlots(true) then
+			return false
+		end
+		local _, _, found = Hotbar.lookup(b.name, nil)
+		return not found
 	end
 	return resolveTool() == nil
 end
@@ -1019,7 +1039,7 @@ local function readOwned()
 		end
 	end
 	-- custom hotbar: the "x25" text in the item's slot
-	if b.countLabel and b.countLabel.Parent then
+	if b.countLabel and b.countLabel:IsDescendantOf(game) then
 		local n = parseCountLoose(b.countLabel.Text)
 		if n then
 			return n, "auto"
@@ -1033,6 +1053,9 @@ local function readOwned()
 		if c then
 			return c, "auto"
 		end
+		-- (Deliberately NO whole-screen text search here: from a count-less slot it could latch onto
+		-- some OTHER slot's "x64" and report that as your count.)
+		return nil
 	end
 	if guiSourceFor ~= b.name then
 		guiSource, guiSourceFor, guiScanAt = nil, b.name, 0
@@ -1310,7 +1333,7 @@ local function findAim(cell)
 		if res and (res.Position - fp).Magnitude <= s * 0.3 and res.Normal:Dot(-d) > 0.8 then
 			local sp = screenOf(res.Position)
 			if sp then
-				return { x = sp.X, y = sp.Y }
+				return { x = sp.X, y = sp.Y, world = res.Position }
 			end
 		end
 	end
@@ -1323,7 +1346,7 @@ local function findAim(cell)
 		if res and (res.Position - p).Magnitude <= s * 0.3 and res.Normal.Y > 0.8 then
 			local sp = screenOf(res.Position)
 			if sp then
-				return { x = sp.X, y = sp.Y }
+				return { x = sp.X, y = sp.Y, world = res.Position }
 			end
 		end
 	end
@@ -1348,8 +1371,6 @@ local function placeCell(cell, run)
 	end
 	local s = S.grid.size
 	local center = cellCenter(cell)
-	refreshOverlapFilter()
-	local before = nearbyBlocks(center)
 	local ownedBefore = readOwned()
 
 	if UIS.MouseBehavior ~= Enum.MouseBehavior.Default then
@@ -1374,11 +1395,15 @@ local function placeCell(cell, run)
 	if S.runId ~= run then
 		return "stopped"
 	end
+	-- Snapshot of the blocks around the target, taken as late as possible (right before the click, no
+	-- waiting in between) so anything the game draws while the mouse moves isn't mistaken for a result.
+	refreshOverlapFilter()
+	local before = nearbyBlocks(center)
 	Input.seen, Input.seenProcessed, Input.expecting = false, false, true
 	local okClick, clicked = pcall(Input.click, aim.x, aim.y)
 	task.wait(0.03)
-	Input.expecting = false
 	if not okClick then
+		Input.expecting = false
 		log("ERROR", "mouse click failed:", clicked)
 		if Input.switchToExecutor() then
 			return "failed"
@@ -1386,13 +1411,15 @@ local function placeCell(cell, run)
 		return "nocursor", "this executor's mouse click errored (see console)"
 	end
 	if clicked == false then
+		Input.expecting = false
 		return "nocursor", "the cursor moved away from the target, so I didn't click"
 	end
-	S.lastAttempt = { seen = Input.seen, processed = Input.seenProcessed }
 
-	local newPart, removed
+	-- Wait for the result. A NEW block counts only if it is in the target cell (inCell); a new block
+	-- merely nearby (stray) is only considered if nothing shows up in the cell.
+	local inCell, stray, removed
 	local t0 = os.clock()
-	while os.clock() - t0 < CONFIG.PLACE_TIMEOUT and not newPart and not removed do
+	while os.clock() - t0 < CONFIG.PLACE_TIMEOUT and not inCell and not removed do
 		task.wait(0.05)
 		refreshOverlapFilter()
 		for inst in pairs(before) do
@@ -1404,15 +1431,24 @@ local function placeCell(cell, run)
 		if not removed then
 			for inst in pairs(nearbyBlocks(center)) do
 				if not before[inst] then
-					newPart = inst
-					break
+					if (inst.Position - center).Magnitude <= s * 0.9 then
+						inCell = inst
+						break
+					elseif not stray and aim.world and (inst.Position - aim.world).Magnitude <= s * 1.5 then
+						stray = inst
+					end
 				end
 			end
 		end
 	end
+	-- Did Roblox's input system see my click, and did something consume it? (Judged over the whole wait,
+	-- since the signal can arrive a few frames late on a slow client.)
+	Input.expecting = false
+	S.lastAttempt = { seen = Input.seen, processed = Input.seenProcessed, overGui = gameGuiAt(aim.x, aim.y) }
 	if removed then
 		return "broke"
 	end
+	local newPart = inCell or stray
 	if not newPart then
 		local ownedAfter = readOwned()
 		if ownedBefore ~= nil and ownedAfter ~= nil and ownedAfter < ownedBefore then
@@ -1450,16 +1486,22 @@ local function diag(tag, text)
 end
 
 local function setHeld(info)
-	if not S.block or norm(S.block.name) ~= norm(info.name) then
-		S.manualOwned = nil -- a different item: a count typed in for the old one no longer applies
+	local n = norm(info.name)
+	-- Compared with the last item we KNEW about (not with S.block, which is briefly nil whenever
+	-- detection flickers) - so a count you typed in survives a flicker, but not a change of item.
+	if S.heldNorm ~= n then
+		S.heldNorm = n
+		S.manualOwned = nil
 		guiSource, guiSourceFor = nil, nil
 		log("INFO", string.format("holding: %s  [%s]", info.name, info.source))
 	end
 	S.block = info
+	S.misses = 0
 end
 
 -- What are you holding? A standard Tool first, then the selected slot of the game's own hotbar.
-local function detectBlock()
+-- `force` = re-read the hotbar right now instead of waiting for the usual re-find throttle.
+local function detectBlock(force)
 	local char = LocalPlayer.Character
 	local tool = char and char:FindFirstChildOfClass("Tool")
 	if tool then
@@ -1467,7 +1509,7 @@ local function detectBlock()
 		S.itemWhy = nil
 		return true
 	end
-	local item, why, dump = Hotbar.read()
+	local item, why, dump = Hotbar.read(force)
 	if item then
 		setHeld({ name = item.name, slot = item.slot, countLabel = item.countLabel, source = item.source })
 		S.itemWhy = nil
@@ -1482,10 +1524,14 @@ local function detectBlock()
 		Hotbar.lastWhy = why
 		log("WARN", "item detection: " .. tostring(why))
 	end
-	-- A hotbar item that is no longer selected isn't "held" any more. (A real Tool that's merely put
-	-- away stays remembered so AUTO BUILD can take it out again.)
+	-- A hotbar item that has stopped being selected isn't "held" any more - but only after several misses
+	-- in a row, so a flickering highlight doesn't blank it. (A real Tool that's merely put away stays
+	-- remembered so AUTO BUILD can take it out again.)
 	if S.block and S.block.slot then
-		S.block = nil
+		S.misses = (S.misses or 0) + 1
+		if S.misses >= 3 then
+			S.block = nil
+		end
 	end
 	return S.block ~= nil
 end
@@ -1526,15 +1572,18 @@ local function failureReason()
 	local a = S.lastAttempt
 	if a and not a.seen then
 		return diag("INPUT", "My clicks never reached Roblox's input system (the executor's mouse events aren't being delivered), so the game never saw them.")
-	elseif a and a.processed then
+	elseif a and a.processed and a.overGui then
 		return diag("INPUT", "My clicks were swallowed by a GUI element in front of the target - the game's UI got the click, not the world.")
 	end
+	-- (If the click was marked "processed" but nothing was over the target, the game itself consumed the
+	-- click through its own input handling - i.e. it reacted and still placed nothing: that's PLACEMENT.)
 	return diag("PLACEMENT", "My clicks reached the game, on the target, but it didn't place a block. Usual causes: out of placement range, not your land, a cooldown, the game needs a different action (hold / build mode), or the held item can't be placed. That is the game/server refusing, not the script.")
 end
 
 local function runBuild(run)
 	local order = S.order
-	if not order then
+	local block = S.block -- (kept in a local: S.block can be cleared by the tick once STOP is pressed)
+	if not order or not block then
 		return
 	end
 	refreshOverlapFilter()
@@ -1564,7 +1613,7 @@ local function runBuild(run)
 	local fails = 0
 	for pass = 1, 2 do
 		fails = 0
-		local deferred, lastWhy, noaimCount = {}, nil, 0
+		local deferred, lastWhy, noaimCount, anyFailed = {}, nil, 0, false
 		for _, i in ipairs(todo) do
 			if S.runId ~= run then
 				return
@@ -1598,13 +1647,13 @@ local function runBuild(run)
 						if itemGone() then
 							return outOfBlocks(run) -- the stack left your hotbar: that's what running out looks like here
 						end
-						return stopBuild(run, diag("ITEM", "I can't read your " .. S.block.name .. " count any more (did the hotbar change?). Stopped."), "error")
+						return stopBuild(run, diag("ITEM", "I can't read your " .. block.name .. " count any more (did the hotbar change?). Stopped."), "error")
 					end
 					if owned <= 0 then
 						return outOfBlocks(run)
 					end
 					if not ensureEquipped() then
-						return stopBuild(run, diag("ITEM", "'" .. S.block.name .. "' isn't the selected hotbar item any more. Select it again and press AUTO BUILD."), "error")
+						return stopBuild(run, diag("ITEM", "'" .. block.name .. "' isn't the selected hotbar item any more. Select it again and press AUTO BUILD."), "error")
 					end
 					if S.runId ~= run then
 						return
@@ -1639,8 +1688,8 @@ local function runBuild(run)
 					S.placed += 1 -- counted only because a block was SEEN appearing in this cell
 					S.placedAll += 1
 					fails = 0
-					if S.verifiedName ~= norm(S.block.name) then
-						S.verifiedName = norm(S.block.name)
+					if S.verifiedName ~= norm(block.name) then
+						S.verifiedName = norm(block.name)
 						status("Placement VERIFIED: a real block appeared in the world. Building...", "success")
 					end
 					render()
@@ -1662,6 +1711,7 @@ local function runBuild(run)
 					return stopBuild(run, diag("DETECTION", "A block was used up (" .. tostring(extra) .. ") but I couldn't see it appear in the target cell, so I stopped. The game's block size / grid probably isn't what I detected - try clicking a placed block as Point A."), "error")
 				else -- "failed": the click didn't produce a block
 					deferred[#deferred + 1] = i
+					anyFailed = true
 					fails += 1
 					if fails >= CONFIG.MAX_FAILS then
 						return stopBuild(run, failureReason(), "error")
@@ -1674,6 +1724,10 @@ local function runBuild(run)
 			break
 		end
 		if pass == 2 then
+			if anyFailed then
+				-- some clicks DID go out and the game didn't place a block: that's not an aiming problem
+				return stopBuild(run, string.format("%d blocks weren't placed. ", #todo) .. failureReason(), "error")
+			end
 			return stopBuild(run, diag("AIM", string.format("%d blocks couldn't be reached (%s).", #todo, lastWhy or "can't aim at them")), "error")
 		end
 		log("INFO", string.format("pass %d done, retrying %d cells", pass, #todo))
@@ -1708,7 +1762,7 @@ local function autoBuild()
 	end
 
 	-- 1) ITEM: what is in your hand? (a Tool, or the selected slot of the game's own hotbar)
-	detectBlock()
+	detectBlock(true) -- (forced: read the hotbar right now, don't wait for the usual throttle)
 	if not S.block then
 		if S.manualOwned ~= nil then
 			-- Can't identify the item, but you typed a block count: go ahead, carefully. The first click
@@ -1881,14 +1935,22 @@ local function startPicking()
 	detectBlock()
 	local char = LocalPlayer.Character
 	local hum = char and char:FindFirstChildOfClass("Humanoid")
+	local putAway = false
 	if hum and char:FindFirstChildOfClass("Tool") then
-		pcall(function()
+		putAway = pcall(function()
 			hum:UnequipTools()
 		end)
 	end
 	S.pick = "A"
 	bindPick()
-	status("Click the first corner (Point A). Your block is put away while you choose.", "info")
+	if putAway then
+		status("Click the first corner (Point A). Your block was put away while you choose.", "info")
+	elseif S.block and S.block.slot then
+		-- a custom-hotbar item can't be put away by a script: deselecting it is up to you
+		status("Click the first corner (Point A). Tip: deselect your block while choosing, or the game may place one at each click.", "info")
+	else
+		status("Click the first corner (Point A).", "info")
+	end
 end
 
 handleClick = function()
@@ -2316,7 +2378,9 @@ local function buildGui()
 			if S.block then
 				local verified = S.verifiedName == norm(S.block.name)
 				local safeName = string.gsub(string.upper(S.block.name), "[<>&]", { ["<"] = "&lt;", [">"] = "&gt;", ["&"] = "&amp;" })
-				local tag = verified and "verified" or (S.block.slot and ("slot " .. S.block.slot) or "detected")
+				local tag = verified and "verified"
+					or (S.block.source == "unknown" and "unverified")
+					or (S.block.slot and ("#" .. S.block.slot .. " detected") or "detected")
 				w.blockLabel.Text = string.format('BLOCK: %s  <font color="%s">%s</font>', safeName, verified and "#58D67E" or "#8A8A92", tag)
 			else
 				w.blockLabel.Text = 'BLOCK: <font color="#F05248">not detected</font>'
