@@ -1,15 +1,26 @@
 --[[
-	ABOVE[RUINS] | AUTO BUILDER   (single script for MacSploit)
+	ABOVE[RUINS] | WORLDEDIT   (single script for MacSploit)
 
 	HOW TO USE
 	  1. Join the game and paste this whole file into MacSploit and Execute. A small menu appears.
-	  2. [ SELECT AREA ] -> click corner A, then the opposite corner B (the orange outline = what gets filled).
-	  3. Select your block in the hotbar (press its number). The menu shows BLOCK: <name> and NEEDED / OWNED.
-	  4. [ AUTO BUILD ]. Cells are filled in one fixed order, bottom layer first. Cells that already hold a
-	     block are skipped. [ STOP ] stops at once. If it stops because of a problem, fix it (get closer, tilt
-	     the camera, get more blocks) and press the same button again - it says RESUME and carries on.
-	  RightShift hides / shows the menu.   You may move the mouse while it builds: it takes the cursor back for
-	  every click (so the cursor will jump around), and builds fastest if you leave it alone.
+	  2. [ SELECT AREA ] -> click corner A, then the opposite corner B. Both snap to the game's block grid and
+	     an orange outline shows the region. The menu shows how many cells are empty (NEEDED) and how many
+	     blocks you OWN; the status line says how many cells are already filled.
+	  3. Select your block in the hotbar (press its number). The menu shows what it detected.
+	  4. [ FILL ]. Empty cells are filled one at a time, bottom layer first; cells that already hold a block are
+	     skipped and nothing is placed outside the outline. While it runs the same button says [ STOP ].
+	     If it stops because of a problem, fix it (get closer, tilt the camera, get more blocks) and press the
+	     button again - it says RESUME and carries on. [ CLEAR SELECTION ] forgets the area.
+	  RightShift hides / shows the menu. You may move the mouse while it builds: it takes the cursor back for
+	  every click (so the cursor jumps), and builds fastest if you leave it alone.
+
+	WHAT IT CANNOT DO (and why it is not called "instant fill")
+	  It is NOT instant and it does NOT work from far away. From a script running on your own computer the only
+	  thing that is allowed is what you could do yourself: click a block face, one block per click. The game's
+	  server checks the distance and your inventory for every one of those clicks. Filling 100 blocks at once, or
+	  from 100 blocks away, would need a bulk-build request that the game's SERVER offers; this script does not
+	  invent or call any private remote, so it does not pretend to have one. It never creates fake or local-only
+	  blocks: every block it counts was seen appearing in the world in the right cell.
 
 	WHAT IT NEVER DOES
 	  It never walks, jumps or teleports your character and never touches your camera. It never calls the game's
@@ -33,7 +44,7 @@
 	banned, and automated clicking may also break the game's own rules. Use at your own risk.
 ]]
 
-local VERSION = "v5.1 mouse-tolerant"
+local VERSION = "v5.2 worldedit menu"
 
 ----------------------------------------------------------------------------------------------
 -- SETTINGS
@@ -480,6 +491,7 @@ local render -- assigned when the menu is built
 render = function() end
 
 local function status(text, kind)
+	S.areaNote = false -- (any new message replaces the "N to fill, M already filled" note)
 	S.status, S.statusKind = text, kind or "info"
 	log(kind == "error" and "WARN" or "INFO", text)
 	render()
@@ -825,6 +837,9 @@ countUnfilled = function()
 	if token == needScanToken then
 		S.needed = empty
 		S.lastCount = os.clock()
+		if S.areaNote and S.min then
+			S.status, S.statusKind = string.format("Area %s: %d to fill, %d already filled.", dimsText(), empty, S.count - empty), "info"
+		end
 		render()
 	end
 end
@@ -2052,7 +2067,7 @@ local function detectBlock(force)
 	end
 	-- A hotbar item that has stopped being selected isn't "held" any more - but only after several misses
 	-- in a row, so a flickering highlight doesn't blank it. (A real Tool that's merely put away stays
-	-- remembered so AUTO BUILD can take it out again.)
+	-- remembered so FILL can take it out again.)
 	if S.block and S.block.slot then
 		S.misses = (S.misses or 0) + 1
 		if S.misses >= 3 then
@@ -2386,7 +2401,7 @@ local function autoBuild()
 	end
 	local owned, ownedSource = readOwned()
 	if owned == nil then
-		status(diag("ITEM", "I found '" .. S.block.name .. "' but can't read how many you have. Type the number into OWNED, then press AUTO BUILD."), "error")
+		status(diag("ITEM", "I found '" .. S.block.name .. "' but can't read how many you have. Type the number into OWNED, then press FILL."), "error")
 		return
 	end
 	if owned <= 0 then
@@ -2531,7 +2546,7 @@ end))
 
 local function startPicking()
 	if S.state == "building" then
-		status("Press STOP first.", "error")
+		status("Press [ STOP ] first.", "error")
 		return
 	end
 	if S.worker then
@@ -2545,7 +2560,7 @@ local function startPicking()
 		detectGrid()
 	end
 	-- With the block in hand, the game's own click handling could place a block at each corner you
-	-- click while choosing the area. Put it away for the selection; AUTO BUILD takes it out again.
+	-- click while choosing the area. Put it away for the selection; FILL takes it out again.
 	detectBlock()
 	local char = LocalPlayer.Character
 	local hum = char and char:FindFirstChildOfClass("Humanoid")
@@ -2593,7 +2608,9 @@ handleClick = function()
 			S.a, S.b = nil, nil
 			setSelection()
 		else
-			status(string.format("Area selected: %s. Hold your block and press AUTO BUILD.", dimsText()), "info")
+			status(string.format("Area selected: %s. Equip your block and press FILL.", dimsText()), "info")
+			S.areaNote = true -- the next count replaces this with "N to fill, M already filled"
+			task.spawn(countUnfilled)
 		end
 	end
 end
@@ -2638,6 +2655,32 @@ local function stop()
 		task.spawn(countUnfilled)
 	end
 	render()
+end
+
+-- CLEAR SELECTION: forgets the area (and stops a build that is running first).
+local function clearSelection()
+	if S.state == "building" then
+		stop()
+	end
+	if S.pick then
+		stopPicking()
+		Preview.setA(nil)
+	end
+	S.a, S.b = nil, nil
+	S.state = "idle"
+	setSelection() -- clears the area, the stopped job and the orange outline
+	Preview.clear()
+	status("Selection cleared.", "info")
+	render()
+end
+
+-- The one big button: FILL / RESUME when idle, STOP while it is building.
+local function fillOrStop()
+	if S.state == "building" then
+		stop()
+	else
+		autoBuild()
+	end
 end
 
 ----------------------------------------------------------------------------------------------
@@ -2798,7 +2841,7 @@ local function buildGui()
 	local titleBar = new("Frame", { Name = "TitleBar", BackgroundTransparency = 1, Size = UDim2.new(1, 0, 0, 34), Parent = window })
 	new("TextLabel", {
 		BackgroundTransparency = 1, Position = UDim2.fromOffset(12, 0), Size = UDim2.new(1, -62, 1, 0),
-		Text = '<font color="#FF8C14">ABOVE[RUINS]</font> | AUTO BUILDER', RichText = true, TextColor3 = T.text,
+		Text = '<font color="#FF8C14">ABOVE[RUINS]</font> | WORLDEDIT', RichText = true, TextColor3 = T.text,
 		Font = T.bold, TextSize = 12, TextXAlignment = Enum.TextXAlignment.Left, Parent = titleBar,
 	})
 	local function titleButton(text, x)
@@ -2827,7 +2870,7 @@ local function buildGui()
 	local reopen = new("TextButton", {
 		Name = "Reopen", BackgroundColor3 = T.bg, BorderSizePixel = 0, AutoButtonColor = false,
 		AnchorPoint = Vector2.new(0, 1), Position = UDim2.new(0, 12, 1, -12), Size = UDim2.fromOffset(150, 30),
-		Text = "AUTO BUILDER", TextColor3 = ORANGE, Font = T.bold, TextSize = 12, Visible = false, Parent = gui,
+		Text = "WORLDEDIT", TextColor3 = ORANGE, Font = T.bold, TextSize = 12, Visible = false, Parent = gui,
 	}, { corner(8), stroke(ORANGE, 2) })
 	UI.reopen = reopen
 
@@ -2892,14 +2935,14 @@ local function buildGui()
 			end)
 		end)
 
-		-- AUTO BUILD
-		w.autoBtn = button("[ AUTO BUILD ]", "primary", 36)
-		w.autoBtn.onClick = autoBuild
+		-- FILL (becomes STOP while it is building, RESUME after a stop)
+		w.autoBtn = button("[ FILL ]", "primary", 36)
+		w.autoBtn.onClick = fillOrStop
 		add(body, w.autoBtn.inst)
 
-		-- STOP
-		w.stopBtn = button("[ STOP ]", "danger", 30)
-		w.stopBtn.onClick = stop
+		-- CLEAR SELECTION
+		w.stopBtn = button("[ CLEAR SELECTION ]", "secondary", 28)
+		w.stopBtn.onClick = clearSelection
 		add(body, w.stopBtn.inst)
 
 		-- one small status line (click it to copy the debug log)
@@ -3016,9 +3059,9 @@ local function buildGui()
 				w.owned.TextColor3 = T.green
 			end
 
-			local label = "[ AUTO BUILD ]"
+			local label = "[ FILL ]"
 			if S.state == "building" then
-				label = string.format("[ BUILDING  %s/%s ]", fmt(S.placed), fmt(S.total))
+				label = string.format("[ STOP  %s/%s ]", fmt(S.placed), fmt(S.total)) -- the same button stops it
 			elseif S.worker then
 				label = "[ STOPPING... ]" -- the last click is still being checked; no new build until it ends
 			elseif S.job and S.job.resumable then
@@ -3027,12 +3070,12 @@ local function buildGui()
 				label = string.format("[ DONE  %s/%s ]", fmt(S.placed), fmt(S.total))
 			end
 			w.autoBtn.inst.Text = label
-			w.autoBtn.setEnabled(S.order ~= nil and not busy and not S.pick and not S.worker)
-			w.stopBtn.setEnabled(busy or S.pick ~= nil)
+			w.autoBtn.setEnabled(busy or (S.order ~= nil and not S.pick and not S.worker))
+			w.stopBtn.setEnabled(busy or S.pick ~= nil or S.a ~= nil or S.min ~= nil)
 
 			w.statusBtn.Text = "STATUS: " .. S.status
 			w.statusBtn.TextColor3 = STATUS_COLOR[S.statusKind] or T.muted
-			UI.reopen.Text = busy and string.format("AUTO BUILDER  %s/%s", fmt(S.placed), fmt(S.total)) or "AUTO BUILDER"
+			UI.reopen.Text = busy and string.format("WORLDEDIT  %s/%s", fmt(S.placed), fmt(S.total)) or "WORLDEDIT"
 		end)
 	end
 
@@ -3075,5 +3118,5 @@ task.spawn(function()
 end)
 
 log("INFO", "version " .. VERSION)
-status("READY. Select an area, hold your block, press AUTO BUILD.  (" .. VERSION .. ")", "info")
+status("READY. Select an area, equip your block, press FILL.  (" .. VERSION .. ")", "info")
 log("INFO", "ready - the menu should be visible now (top-right)")

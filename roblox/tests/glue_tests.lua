@@ -252,6 +252,14 @@ local function boot()
 			W.stopAfter = nil
 			T.stop() -- the player presses STOP while this click is in flight
 		end
+		if W.clearAfter and W.placedCount >= W.clearAfter then
+			W.clearAfter = nil
+			T.clearSelection() -- the player presses CLEAR SELECTION while this click is in flight
+		end
+		if W.toggleAfter and W.placedCount >= W.toggleAfter then
+			W.toggleAfter = nil
+			T.fillOrStop() -- the player presses the big button (which says STOP now)
+		end
 		return true
 	end
 
@@ -455,6 +463,46 @@ test("interrupted again and again (every 2 blocks): always exact", function()
 		if W.T.S.state == "done" then break end
 	end
 	eq(W.T.S.state, "done"); eq(W.T.S.placed, 16); eq(#W.clicks, 16)
+end)
+
+print("the WORLDEDIT-style menu")
+test("the area note says exactly how many cells will be filled and how many are already filled", function()
+	local W = boot()
+	W.filled["0,0,0"] = true; W.filled["1,0,1"] = true
+	W.T.S.areaNote = true
+	W.select(A, B33)
+	has(W.T.S.status, "7 to fill, 2 already filled"); eq(W.T.S.needed, 7)
+end)
+test("CLEAR SELECTION forgets the area; FILL then asks for a new one", function()
+	local W = boot()
+	W.select(A, B33)
+	W.T.clearSelection()
+	local S = W.T.S
+	eq(S.a, nil); eq(S.min, nil); eq(S.job, nil); has(S.status, "Selection cleared")
+	W.press()
+	has(S.status, "Select an area first"); eq(#W.clicks, 0)
+end)
+test("CLEAR SELECTION during a build stops it at once and clears everything; nothing more is placed", function()
+	local W = boot()
+	W.clearAfter = 3
+	W.select(A, B33)
+	W.press()
+	local S = W.T.S
+	eq(S.state, "idle"); eq(S.min, nil); eq(S.job, nil); eq(#W.clicks, 3); eq(W.placedCount, 3)
+	eq(S.placed, 3, "the block that really appeared is still counted")
+	eq(W.clicksOnFilled, 0); noScriptErrors(W)
+end)
+test("the big button is STOP while building and RESUME afterwards", function()
+	local W = boot()
+	W.toggleAfter = 4
+	W.select(A, B33)
+	W.press()
+	local S = W.T.S
+	eq(S.state, "idle"); eq(S.placed, 4); truthy(S.job and S.job.resumable)
+	W.T.fillOrStop() -- idle: it starts / resumes
+	W.drain()
+	eq(S.state, "done"); eq(S.placed, 9); eq(#W.clicks, 9)
+	invariants(W, "toggle")
 end)
 
 print("moving the mouse never stops a build")

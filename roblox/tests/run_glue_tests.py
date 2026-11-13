@@ -32,7 +32,7 @@ source = re.sub(r"^(\s*)([A-Za-z_][\w\.\[\]\"']*)\s*([\+\-\*/])=\s*(.+)$", compo
 
 # the locals the tests need to reach, and the ones they replace with simulated versions
 SETTABLE = ["detectBlock", "ensureEquipped", "itemGone", "readOwned", "calibrateNear", "cellOccupied", "myParts", "UIS", "findAims"]
-hooks = "genv.__T = { S = S, Watch = Watch, Input = Input, stop = stop, autoBuild = autoBuild, setSelection = setSelection,\n"
+hooks = "genv.__T = { S = S, Watch = Watch, Input = Input, stop = stop, autoBuild = autoBuild, setSelection = setSelection, clearSelection = clearSelection, fillOrStop = fillOrStop,\n"
 hooks += "\tset = function(name, value)\n"
 for i, name in enumerate(SETTABLE):
     hooks += f"\t\t{'if' if i == 0 else 'elseif'} name == '{name}' then {name} = value\n"
