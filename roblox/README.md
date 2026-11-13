@@ -1,82 +1,90 @@
 # ABOVE[RUINS] | Auto Builder — MacSploit script
 
 One file: **`AutoBuilder_MacSploit.lua`**. Paste it into MacSploit while you're in the game and Execute.
-No installation, nothing in any Roblox service, no Studio.
+No installation, nothing in any Roblox service, no Studio. The status line shows the version (`v3 custom-hotbar`)
+so you can tell you're running the latest file.
 
-> **Status: not yet run in MacSploit or in ABOVE[RUINS].** I can't run either here, and I haven't seen the
-> game's building code. Automatic placement depends on how the game's own click-to-place behaves, so treat the
-> first run as a test (try a 2×2 area). If something fails, the menu's status line says why, and **clicking the
-> status line copies the debug log** to your clipboard (it's also printed to the F9 console).
+> **Status: not yet run in MacSploit or in ABOVE[RUINS].** I can't run either here and I haven't seen the game's
+> hotbar GUI or building code. The hotbar detection is heuristic (see below). If something fails the status line says
+> *which part* failed, and **clicking the status line copies the debug log** (it includes a dump of every hotbar slot it
+> saw), which is what I need to fix it.
 >
-> Running scripts through an executor is against Roblox's Terms of Use and can get an account banned; automated
-> clicking may also break the game's own rules.
+> Running scripts through an executor is against Roblox's Terms of Use and can get an account banned; automated clicking
+> may also break the game's own rules.
 
-## The whole flow
+## The flow
 
-**EQUIP BLOCK → SELECT AREA (two clicks) → AUTO BUILD → DONE**
+**SELECT AREA → select your block in the hotbar → AUTO BUILD**
 
 | Menu | What it does |
 |---|---|
 | **SELECT AREA** | click corner A, then the opposite corner B — the orange outline is exactly what will be filled |
-| **BLOCK: GRASS BLOCK** | automatic — whatever is in your hand |
-| **NEEDED: 36 \| OWNED: 8** | automatic — empty cells left in the area, and how many of that block you have. If the game's number can't be read, click OWNED and type it once |
-| **AUTO BUILD** | places the blocks one at a time; the button shows real progress (`BUILDING 8/36`) |
-| **STOP** | stops at once (no further clicks) |
+| **BLOCK: GRASS BLOCK  slot 4** | the item you have selected. Grey word = *detected* only; it turns green **verified** only after a real block has been seen appearing in the world |
+| **NEEDED: 10 \| OWNED: 25** | empty cells left in the area; how many of that block you have (read from the hotbar's "x25") |
+| **AUTO BUILD** | always clickable once an area is selected. Places blocks one at a time; button shows real progress (`BUILDING 3/10`) |
+| **STOP** | stops at once |
 
-RightShift hides/shows the menu. Keep the whole area on screen (not under Roblox's top bar or the bottom hotbar), stay
-within the game's placement range, and don't touch the mouse while it builds.
+Select the block **after** choosing the area (so the game's own click handling can't place blocks at the corners you click).
+RightShift hides/shows the menu. Keep the whole area on screen, stay in placement range, don't touch the mouse while it builds.
 
-While you click the two corners, SELECT AREA puts your block away (so the game's own click handling can't place stray
-blocks at the corners); AUTO BUILD takes it out again by itself.
+## How it finds your block (custom hotbar)
 
-## How it places blocks
+ABOVE[RUINS] draws its own hotbar, so there is no Roblox `Tool` to look at. The script reads the hotbar GUI instead:
 
-It does **not** call any RemoteEvent/RemoteFunction, hook anything, or change your inventory. It acts like a very fast,
-careful player:
+1. finds the slots — containers that each show a number 1–9 (it needs 3+ in a row),
+2. reads each slot's item name and count (`x25`, `25x`, `×25`, or a bare `25`),
+3. picks the **selected** slot: the one the game highlights (yellow outline / background / frame); if no highlight is
+   recognisable it takes the only slot that is styled differently from the rest; as a last resort it looks for a player
+   attribute/value such as `EquippedItem` / `SelectedSlot`,
+4. reads your block count live from that slot (and re-finds it if the game redraws the hotbar).
 
-1. for the next empty cell it finds a face next to it (the ground or a neighbouring block) that your camera can see,
-2. moves the mouse there and confirms the cursor really arrived,
-3. clicks with your block in hand,
-4. waits to **see a block actually appear in that cell**.
+A standard Tool in your hand is used too, if there is one. If the hotbar can't be read at all, AUTO BUILD still runs: type how
+many you have into **OWNED** and it proceeds in cautious mode (first click verified, stops immediately if a block gets
+removed instead of placed).
 
-So the game's own building code decides whether each block is placed — range, land ownership, cooldown, and taking one
-block from your inventory all happen exactly as when you click yourself. Blocks are real server-side blocks, visible to
-everyone. Nothing is created locally; the outline is drawn with adornments (not parts), so the game's click handling can't hit
-it and it can't be mistaken for a block.
+## Placement: what "equipped" vs "verified" means
 
-- Order: bottom layer first, row by row. Cells already filled are skipped (not counted, not charged).
-- The progress number counts only blocks it saw appear in the right cell.
-- It follows the game's grid: detected from the cube-shaped blocks around you, refined from the block you click as Point A,
-  and corrected from the first block it places.
+Detecting an item only means *I read the hotbar*. It is **not** proof that placing works. After each click the script
+waits to **see a new block appear in the right cell**; only then does it count the block and mark the item *verified*.
+Nothing is counted from estimates.
 
-## It stops (and says why) when
+## If it doesn't work: the status line names the part that failed
 
-- you run out of blocks (`Out of blocks. Placed 8 of 36 …` — get more and press AUTO BUILD again; filled cells are skipped),
-- 3 blocks in a row fail to appear (not in hand? out of range? area off screen?),
-- a block lands in a different cell than intended,
-- the cursor can't be moved/confirmed, or the mouse is locked (shift-lock / first person),
-- some cells can't be aimed at (hidden, off screen, behind the menu or one of the game's buttons).
+| Tag | Meaning |
+|---|---|
+| `[ITEM]` | I couldn't identify the selected hotbar item, read its count, or it's not selected any more |
+| `[INPUT]` | the mouse cursor can't be controlled, or my click never reached Roblox / was swallowed by a GUI |
+| `[AIM]` | I can't find a visible place to click (area hidden, off screen, behind the menu or the game's buttons) |
+| `[PLACEMENT]` | my clicks reached the game on target but it didn't place a block (range, land ownership, cooldown, needs a different action) — or a block disappeared (the item breaks blocks), or one landed in the wrong cell |
+| `[DETECTION]` | a block was used up but I couldn't see it in the world (block size / grid mismatch) |
 
-## Safety checks before it starts
+How it tells them apart: before building it moves the cursor and confirms it followed (`[INPUT]`); on each click it checks whether
+Roblox's input system saw the click (`[INPUT]` if not) and whether a GUI consumed it; if the click arrived cleanly and no block
+appeared, that is the game/server refusing (`[PLACEMENT]`); if your block count dropped but no block was visible it's `[DETECTION]`.
 
-- It refuses if the item in your hand looks like a **tool or weapon** (pickaxe, axe, sword …): clicking with those would try
-  to break blocks.
-- It needs to know your block count (read automatically, or typed into OWNED), so it can stop when you run out.
+## What actually places the blocks — and what could prevent it
 
-## Limitations — what can prevent automatic placement
+It does **not** call any RemoteEvent/RemoteFunction, hook anything, or change your inventory. It aims at a face next to each
+empty cell, moves the mouse there, clicks, and lets the **game's own building code** decide — range, land ownership, cooldown
+and taking one block from your inventory all happen exactly as when you click yourself. Blocks are real server-side blocks.
 
-- **Mouse control.** It needs `VirtualInputManager` or the executor's `mousemoveabs` / `mouse1click`. If neither works, the
-  menu says it can't control the mouse and nothing is placed. (Tell me which mouse functions your MacSploit has.)
-- **How the game places blocks.** It assumes: hold the block, click a face, a block appears next to it. If ABOVE[RUINS] uses
-  hold-to-place, a build mode, placement relative to your character, or its own cooldown/anti-macro checks, the game may
-  refuse the clicks — then the status line says the game isn't placing blocks.
-- **The block must be a Tool in your hand** so it can be detected. If your hotbar isn't made of Roblox Tools, it can't tell what
-  you're holding.
-- It can't walk for you, and it can't place where the game doesn't allow you to place (other players' land, out of range).
-- Areas are capped at 5,000 blocks (`CONFIG.MAX_CELLS`); settings are at the top of the script.
-- It never bypasses server checks — anything the server refuses, it can't do.
+What can stop it (the script can't work around these, and says so):
+
+- **No mouse control.** It needs `VirtualInputManager` or the executor's `mousemoveabs`/`mouse1click`.
+- **The game doesn't use "hold block, click a face".** Hold-to-place, a build mode, placement relative to your character, or
+  anti-macro checks would make it refuse the clicks (`[PLACEMENT]`). Doing that for real would need the game's own documented
+  building interface, which I don't have and won't guess at.
+- **Hotbar detection is heuristic.** If your hotbar's highlight isn't recognisable, the log's slot dump shows what it saw —
+  send it to me.
+- Server-side limits (range, land ownership) apply; it can't place where you can't.
+- It can't walk for you. Areas are capped at 5,000 blocks (`CONFIG.MAX_CELLS`).
+
+## Safety
+
+It refuses a held item that looks like a tool (pickaxe, axe, sword …), and stops immediately if a block *disappears* after a
+click. STOP sends no further clicks.
 
 ## For your own Studio game
 
-Real placement for a game you own belongs on the server (validate ownership, take one block per placement, place it). An
-earlier Studio version of this project did exactly that: git history, commit `731e306`, folder `roblox/src`.
+Real placement for a game you own belongs on the server (validate ownership, take one block per placement, place it). An earlier
+Studio version of this project did exactly that: git history, commit `731e306`, folder `roblox/src`.
