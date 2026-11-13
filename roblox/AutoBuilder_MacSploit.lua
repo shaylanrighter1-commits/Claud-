@@ -2,12 +2,12 @@
 	ABOVE[RUINS] | AUTO BUILDER   (single script for MacSploit)
 
 	HOW TO USE
-	  1. Join the game and stand near the spot you want to build, with the area visible on screen.
+	  1. Join the game, stand near the spot, camera angled so the whole area is on screen.
 	  2. Paste this whole file into MacSploit and Execute. A small menu appears (top-right).
-	  3. SELECT AREA  -> click corner A, then the opposite corner B (orange outline = what gets filled).
-	  4. Put the block you want in your hand (press its hotbar number), then press SELECT BLOCK.
-	  5. AUTO BUILD. It places the blocks one at a time, skips cells that are already filled, stops when
-	     you run out, and carries on by itself when you get more. PAUSE / CANCEL work at any time.
+	  3. Put the block you want in your hand (press its hotbar number). The menu shows it.
+	  4. SELECT AREA -> click corner A, then the opposite corner B (orange outline = what gets filled).
+	  5. AUTO BUILD. It places the blocks one at a time and skips cells that are already filled.
+	     It stops if you run out of blocks or placement fails, and tells you why. STOP stops it at once.
 	  RightShift hides / shows the menu.   Don't touch the mouse while it is building.
 
 	HOW IT PLACES BLOCKS
@@ -157,7 +157,8 @@ local S = {
 	manualOwned = nil, -- number typed into BLOCKS OWNED (nil = read it from the game)
 	manualAt = 0, -- placedAll when manualOwned was typed
 	needed = nil, -- empty cells left in the selection (nil = still counting)
-	state = "idle", -- idle | building | paused | waiting | done
+	state = "idle", -- idle | building | done
+	stoppedRun = nil, -- runId of the build the STOP button ended
 	runId = 0,
 	placed = 0,
 	total = 0,
@@ -502,7 +503,7 @@ end
 -- how many cells in the selection are still empty (yields so it never hitches the game)
 countUnfilled = function()
 	local order = S.order
-	if not order or S.state == "building" or S.state == "waiting" then
+	if not order or S.state == "building" then
 		return
 	end
 	needScanToken += 1
@@ -670,35 +671,6 @@ local function readOwned()
 		end
 	end
 	return nil
-end
-
-local function selectBlock()
-	local char = LocalPlayer.Character
-	local tool = char and char:FindFirstChildOfClass("Tool")
-	if not tool then
-		-- nothing in hand: step through the tools in your backpack
-		local list = {}
-		local backpack = LocalPlayer:FindFirstChildOfClass("Backpack")
-		if backpack then
-			for _, t in ipairs(backpack:GetChildren()) do
-				if t:IsA("Tool") then
-					list[#list + 1] = t
-				end
-			end
-		end
-		if #list == 0 then
-			status("Hold the block in your hand first (press its hotbar number).", "error")
-			return
-		end
-		S.cycle = ((S.cycle or 0) % #list) + 1
-		tool = list[S.cycle]
-	end
-	S.block = { name = cleanName(tool.Name), tool = tool }
-	S.manualOwned = nil
-	guiSource, guiSourceFor = nil, nil
-	local owned = readOwned()
-	log("INFO", "block selected:", S.block.name, "| owned:", tostring(owned))
-	status("Block: " .. S.block.name .. (owned == nil and " — type how many you have." or ""), "info")
 end
 
 local function ensureEquipped()
@@ -974,32 +946,50 @@ local function placeCell(cell)
 end
 
 ----------------------------------------------------------------------------------------------
--- 11. The build loop: place, verify, skip filled cells, wait for blocks, pause, cancel
+-- 11. The block in your hand + the build loop
 ----------------------------------------------------------------------------------------------
--- Blocks here until it's OK to continue. Returns false if the build was cancelled.
-local function gate(run)
-	while S.runId == run and ARB.alive do
-		if S.state == "building" then
+-- The block you're holding IS the block that gets placed. This follows your hotbar automatically.
+local function detectBlock()
+	local char = LocalPlayer.Character
+	local tool = char and char:FindFirstChildOfClass("Tool")
+	if not tool then
+		return S.block ~= nil -- nothing in hand right now: keep the last one so AUTO BUILD can re-equip it
+	end
+	local name = cleanName(tool.Name)
+	if not S.block or S.block.name ~= name then
+		S.manualOwned = nil -- a different block: a count typed in for the old one no longer applies
+		guiSource, guiSourceFor = nil, nil
+		log("INFO", "holding:", name)
+	end
+	S.block = { name = name, tool = tool }
+	return true
+end
+
+-- Safety: clicking with a pickaxe / axe / sword in hand would BREAK blocks instead of placing them,
+-- so anything that looks like a tool or weapon is refused.
+local TOOL_WORDS = {
+	"sword", "pickaxe", "pick", "axe", "shovel", "spade", "hammer", "spear", "dagger", "knife", "wand",
+	"staff", "scythe", "sickle", "hoe", "bow", "rod", "club", "mace", "shield", "saw", "drill",
+}
+local function looksLikeTool(name)
+	local padded = " " .. string.lower(name) .. " "
+	for _, word in ipairs(TOOL_WORDS) do
+		if string.find(padded, "[^%a]" .. word .. "[^%a]") then
 			return true
-		elseif S.state == "waiting" then
-			local owned = readOwned()
-			if owned and owned > 0 then
-				S.state = "building"
-				status("Blocks available - building again.", "success")
-				return true
-			end
 		end
-		task.wait(0.2)
 	end
 	return false
 end
 
-local function stopWith(run, state, text, kind)
+-- Ends the build (if `run` is still the current one) and says why.
+local function stopBuild(run, text, kind)
 	if S.runId ~= run then
 		return
 	end
-	S.state = state
+	S.state = "idle"
 	status(text, kind)
+	S.needed = nil
+	task.spawn(countUnfilled)
 end
 
 local function runBuild(run)
@@ -1009,7 +999,7 @@ local function runBuild(run)
 	end
 	refreshOverlapFilter()
 
-	-- fresh count of what's still empty
+	-- Fresh look at the world: which cells are still empty? (Existing blocks are skipped.)
 	local todo = {}
 	for i = 1, order.n do
 		if not cellOccupied({ x = order.xs[i], y = order.ys[i], z = order.zs[i] }) then
@@ -1026,53 +1016,56 @@ local function runBuild(run)
 	S.total, S.placed = #todo, 0
 	if S.total == 0 then
 		S.needed = 0
-		stopWith(run, "idle", "Nothing to build - the area is already full.", "info")
+		stopBuild(run, "Nothing to build - the area is already full.", "info")
 		return
 	end
-	log("INFO", string.format("build started: %d blocks to place of %d cells", S.total, order.n))
+	log("INFO", string.format("build started: %d blocks to place (%d cells in the area)", S.total, order.n))
 
 	local fails = 0
-	for pass = 1, 3 do
+	for pass = 1, 2 do
 		local deferred, lastWhy = {}, nil
 		for _, i in ipairs(todo) do
-			if not gate(run) then
+			if S.runId ~= run then
 				return
 			end
 			local cell = { x = order.xs[i], y = order.ys[i], z = order.zs[i] }
 			refreshOverlapFilter()
 
 			if cellOccupied(cell) then
-				S.total -= 1 -- someone (or something) filled it already: skip, don't spend a block
+				S.total -= 1 -- filled in the meantime: skip it, don't spend a block
 			else
-				-- out of blocks? wait here until you have some again (re-checked after every pause/resume)
 				local owned = readOwned()
-				while owned ~= nil and owned <= 0 do
-					S.state = "waiting"
-					status("Out of blocks - collect more and I'll carry on.", "error")
-					if not gate(run) then
-						return
-					end
-					owned = readOwned()
+				if owned ~= nil and owned <= 0 then
+					return stopBuild(run, string.format("Out of blocks. Placed %d of %d - get more, then press AUTO BUILD to carry on.", S.placed, S.total), "error")
 				end
-				while not ensureEquipped() do
-					S.state = "paused"
-					status("Hold '" .. S.block.name .. "' in your hand, then press RESUME.", "error")
-					if not gate(run) then
-						return
-					end
+				if not ensureEquipped() then
+					return stopBuild(run, "Stopped: hold '" .. S.block.name .. "' in your hand.", "error")
+				end
+				if S.runId ~= run then
+					return
 				end
 
 				local result, extra = placeCell(cell)
 				if result == "failed" then
 					task.wait(0.25) -- one retry (the game may have a short placement cooldown)
-					if not gate(run) then
+					if S.runId ~= run then
 						return
 					end
 					result, extra = placeCell(cell)
 				end
 
+				if S.runId ~= run then
+					-- STOP was pressed while that click was in flight. If the block really appeared,
+					-- still count it - but only when no newer build has started in the meantime.
+					if result == "placed" and S.runId == run + 1 and S.state ~= "building" then
+						S.placed += 1
+						S.placedAll += 1
+					end
+					return
+				end
+
 				if result == "placed" then
-					S.placed += 1
+					S.placed += 1 -- counted only because a block was seen appearing in this cell
 					S.placedAll += 1
 					fails = 0
 					render()
@@ -1081,22 +1074,12 @@ local function runBuild(run)
 					deferred[#deferred + 1] = i
 					lastWhy = extra
 				elseif result == "misplaced" or result == "nocursor" then
-					S.state = "paused"
-					status("Stopped: " .. tostring(extra) .. ". Fix it, then press RESUME.", "error")
-					if not gate(run) then
-						return
-					end
-					deferred[#deferred + 1] = i
+					return stopBuild(run, "Stopped: " .. tostring(extra) .. ".", "error")
 				else -- "failed": the click didn't produce a block
 					deferred[#deferred + 1] = i
 					fails += 1
 					if fails >= CONFIG.MAX_FAILS then
-						S.state = "paused"
-						status("The game isn't placing blocks. Check: block in hand, in range, area on screen. Then RESUME.", "error")
-						if not gate(run) then
-							return
-						end
-						fails = 0
+						return stopBuild(run, "Stopped: the game isn't placing blocks. Check: block in hand, in range, area on screen, blocks left.", "error")
 					end
 				end
 			end
@@ -1105,11 +1088,8 @@ local function runBuild(run)
 		if #todo == 0 then
 			break
 		end
-		if pass == 3 then
-			stopWith(run, "idle", string.format("%d blocks couldn't be placed (%s). Fix that and press AUTO BUILD again.", #todo, lastWhy or "the game didn't accept them"), "error")
-			S.needed = nil
-			task.spawn(countUnfilled)
-			return
+		if pass == 2 then
+			return stopBuild(run, string.format("Stopped: %d blocks couldn't be placed (%s).", #todo, lastWhy or "the game didn't accept them"), "error")
 		end
 		log("INFO", string.format("pass %d done, retrying %d cells", pass, #todo))
 		task.wait(0.3)
@@ -1126,33 +1106,47 @@ local function runBuild(run)
 end
 
 local function autoBuild()
-	if S.state == "building" or S.state == "waiting" then
-		return
-	end
-	if S.state == "paused" then
-		S.state = "building"
-		status("Resumed.", "info")
-		return
-	end
-	if not S.order then
-		status("Select an area first.", "error")
-		return
-	end
-	if not S.block then
-		status("Select a block first.", "error")
-		return
-	end
-	if not Input.method then
-		status("This executor can't control the mouse, so I can't place blocks for you.", "error")
+	if S.state == "building" then
 		return
 	end
 	if S.pick then
 		status("Finish selecting the area first.", "error")
 		return
 	end
+	if not S.order then
+		status("Select an area first.", "error")
+		return
+	end
+	detectBlock()
+	if not S.block then
+		status("Equip a block in your hotbar first.", "error")
+		return
+	end
+	if not Input.method then
+		status("This executor can't control the mouse, so I can't place blocks for you.", "error")
+		return
+	end
 	if not ensureEquipped() then
 		status("Hold '" .. S.block.name .. "' in your hand first.", "error")
 		return
+	end
+	if looksLikeTool(S.block.name) then
+		status("'" .. S.block.name .. "' looks like a tool - clicking with it could break blocks. Hold the block you want to place.", "error")
+		return
+	end
+	local owned = readOwned()
+	if owned == nil then
+		-- Not being able to read the count also means I can't tell this is a stackable block, and I
+		-- can't stop when you run out - so ask for it once.
+		status("I can't read how many " .. S.block.name .. " you have. Type the number into OWNED, then press AUTO BUILD.", "error")
+		return
+	end
+	if owned <= 0 then
+		status("You have no " .. S.block.name .. " left.", "error")
+		return
+	end
+	if S.state == "building" then
+		return -- a second click arrived while the checks above were running
 	end
 	S.runId += 1
 	local run = S.runId
@@ -1162,20 +1156,13 @@ local function autoBuild()
 	task.spawn(function()
 		safe("build", runBuild, run)
 		if S.runId == run and S.state == "building" then
-			S.state = "idle" -- the loop died unexpectedly; don't leave the menu stuck
+			S.state = "idle" -- the loop died unexpectedly; never leave the menu stuck
 			status("The build stopped because of an error (see the console).", "error")
 		end
+		if S.stoppedRun == run and S.state ~= "building" then
+			status(string.format("Stopped. %d blocks placed.", S.placed), "info")
+		end
 	end)
-end
-
-local function pauseOrResume()
-	if S.state == "building" or S.state == "waiting" then
-		S.state = "paused"
-		status("Paused.", "info")
-	elseif S.state == "paused" then
-		S.state = "building"
-		status("Resumed.", "info")
-	end
 end
 
 ----------------------------------------------------------------------------------------------
@@ -1263,8 +1250,8 @@ keep(UIS.InputBegan:Connect(function(input, processed)
 end))
 
 local function startPicking()
-	if S.state == "building" or S.state == "waiting" or S.state == "paused" then
-		status("Cancel the current build first.", "error")
+	if S.state == "building" then
+		status("Press STOP first.", "error")
 		return
 	end
 	S.a, S.b, S.state = nil, nil, "idle"
@@ -1304,7 +1291,7 @@ handleClick = function()
 			S.a, S.b = nil, nil
 			setSelection()
 		else
-			status(string.format("Area selected: %s. Hold your block, press SELECT BLOCK, then AUTO BUILD.", dimsText()), "info")
+			status(string.format("Area selected: %s. Hold your block and press AUTO BUILD.", dimsText()), "info")
 		end
 	end
 end
@@ -1330,23 +1317,20 @@ keep(RunService.RenderStepped:Connect(function()
 	end
 end))
 
-local function cancel()
+-- STOP: ends picking, or stops the build right now (no further clicks are sent).
+local function stop()
 	if S.pick then
 		stopPicking()
 		Preview.setA(nil)
 		Preview.setArea(S.min, S.max)
 		status("Selection cancelled.", "info")
-	elseif S.state == "building" or S.state == "waiting" or S.state == "paused" then
-		S.runId += 1
+	elseif S.state == "building" then
+		S.stoppedRun = S.runId
+		S.runId += 1 -- the build loop sees this and exits before its next click
 		S.state = "idle"
-		status(string.format("Cancelled. %d blocks were placed; your remaining blocks are untouched.", S.placed), "info")
+		status("Stopping...", "info")
 		S.needed = nil
 		task.spawn(countUnfilled)
-	elseif S.a or S.b then
-		S.a, S.b = nil, nil
-		Preview.clear()
-		setSelection()
-		status("Selection cleared.", "info")
 	end
 	render()
 end
@@ -1487,7 +1471,7 @@ end
 local function buildGui()
 	local cam = workspace.CurrentCamera
 	local vp = cam and cam.ViewportSize or Vector2.new(1280, 720)
-	local W = 236
+	local W = 250
 	local state = { open = true, minimized = false }
 
 	local gui = new("ScreenGui", {
@@ -1509,7 +1493,7 @@ local function buildGui()
 	local titleBar = new("Frame", { Name = "TitleBar", BackgroundTransparency = 1, Size = UDim2.new(1, 0, 0, 34), Parent = window })
 	new("TextLabel", {
 		BackgroundTransparency = 1, Position = UDim2.fromOffset(12, 0), Size = UDim2.new(1, -62, 1, 0),
-		Text = '<font color="#FF8C14">ABOVE[RUINS]</font> | AUTO BUILDER', RichText = true, TextColor3 = T.text,
+		Text = '<font color="#FF8C14">ABOVE[RUINS]</font> AUTO BUILDER', RichText = true, TextColor3 = T.text,
 		Font = T.bold, TextSize = 12, TextXAlignment = Enum.TextXAlignment.Left, Parent = titleBar,
 	})
 	local function titleButton(text, x)
@@ -1537,52 +1521,53 @@ local function buildGui()
 
 	local reopen = new("TextButton", {
 		Name = "Reopen", BackgroundColor3 = T.bg, BorderSizePixel = 0, AutoButtonColor = false,
-		AnchorPoint = Vector2.new(0, 1), Position = UDim2.new(0, 12, 1, -12), Size = UDim2.fromOffset(130, 30),
+		AnchorPoint = Vector2.new(0, 1), Position = UDim2.new(0, 12, 1, -12), Size = UDim2.fromOffset(150, 30),
 		Text = "AUTO BUILDER", TextColor3 = ORANGE, Font = T.bold, TextSize = 12, Visible = false, Parent = gui,
 	}, { corner(8), stroke(ORANGE, 2) })
 	UI.reopen = reopen
 
 	local w = {}
 
-	safe("build: buttons", function()
+	safe("build: controls", function()
+		-- SELECT AREA
 		w.areaBtn = button("SELECT AREA", "secondary", 32)
 		w.areaBtn.onClick = startPicking
 		add(body, w.areaBtn.inst)
 
-		w.blockBtn = button("SELECT BLOCK", "secondary", 32)
-		w.blockBtn.onClick = selectBlock
-		add(body, w.blockBtn.inst)
+		-- BLOCK: GRASS BLOCK   (follows whatever is in your hand)
+		w.blockLabel = new("TextLabel", {
+			BackgroundColor3 = T.panel, BorderSizePixel = 0, Size = UDim2.new(1, 0, 0, 28),
+			Text = "BLOCK: EQUIP ONE", TextColor3 = T.text, Font = T.bold, TextSize = 13,
+			TextTruncate = Enum.TextTruncate.AtEnd,
+		}, { corner(8), stroke(T.line, 1), pad(8, 0, 8, 0) })
+		add(body, w.blockLabel)
 
-		local function row(labelText)
-			local r = new("Frame", { BackgroundTransparency = 1, Size = UDim2.new(1, 0, 0, 24) })
-			new("TextLabel", {
-				BackgroundTransparency = 1, Size = UDim2.new(0.6, 0, 1, 0), Text = labelText, TextColor3 = T.muted,
-				Font = T.bold, TextSize = 12, TextXAlignment = Enum.TextXAlignment.Left, Parent = r,
-			})
-			add(body, r)
-			return r
-		end
-
-		local needRow = row("BLOCKS NEEDED:")
+		-- NEEDED: 36 | OWNED: 8
+		local row = new("Frame", { BackgroundTransparency = 1, Size = UDim2.new(1, 0, 0, 26) })
+		add(body, row)
 		w.needed = new("TextLabel", {
-			BackgroundTransparency = 1, AnchorPoint = Vector2.new(1, 0), Position = UDim2.new(1, 0, 0, 0),
-			Size = UDim2.new(0.4, 0, 1, 0), Text = "-", TextColor3 = T.text, Font = T.bold, TextSize = 15,
-			TextXAlignment = Enum.TextXAlignment.Right, Parent = needRow,
+			BackgroundTransparency = 1, Size = UDim2.new(0.5, -4, 1, 0), Text = "NEEDED: -", TextColor3 = T.text,
+			Font = T.bold, TextSize = 13, TextXAlignment = Enum.TextXAlignment.Left, Parent = row,
 		})
-
-		local ownRow = row("BLOCKS OWNED:")
+		local ownWrap = new("Frame", {
+			BackgroundTransparency = 1, Position = UDim2.new(0.5, 4, 0, 0), Size = UDim2.new(0.5, -4, 1, 0), Parent = row,
+		})
+		new("TextLabel", {
+			BackgroundTransparency = 1, Size = UDim2.new(1, -58, 1, 0), Text = "OWNED:", TextColor3 = T.text,
+			Font = T.bold, TextSize = 13, TextXAlignment = Enum.TextXAlignment.Left, Parent = ownWrap,
+		})
+		-- Normally filled in automatically. If the game's inventory can't be read, click it and type the number.
 		w.owned = new("TextBox", {
 			BackgroundColor3 = T.panel, BorderSizePixel = 0, AnchorPoint = Vector2.new(1, 0),
-			Position = UDim2.new(1, 0, 0, 0), Size = UDim2.new(0, 78, 1, 0), Text = "", PlaceholderText = "type #",
-			TextColor3 = T.text, PlaceholderColor3 = T.muted, Font = T.bold, TextSize = 14, ClearTextOnFocus = false,
-			TextXAlignment = Enum.TextXAlignment.Right, Parent = ownRow,
-		}, { corner(6), stroke(T.line, 1), pad(6, 0, 6, 0) })
+			Position = UDim2.new(1, 0, 0, 1), Size = UDim2.new(0, 56, 1, -2), Text = "", PlaceholderText = "?",
+			TextColor3 = T.text, PlaceholderColor3 = T.muted, Font = T.bold, TextSize = 13, ClearTextOnFocus = false,
+			TextXAlignment = Enum.TextXAlignment.Center, Parent = ownWrap,
+		}, { corner(6), stroke(T.line, 1) })
 		w.owned.FocusLost:Connect(function()
 			safe("owned box", function()
 				local txt = string.gsub(w.owned.Text, "[,%s]", "")
 				if txt == "" then
 					S.manualOwned = nil -- empty = read it from the game again
-					log("INFO", "owned count: reading from the game")
 				else
 					local n = tonumber(txt)
 					if n and n >= 0 then
@@ -1596,23 +1581,17 @@ local function buildGui()
 			end)
 		end)
 
+		-- AUTO BUILD
 		w.autoBtn = button("AUTO BUILD", "primary", 36)
 		w.autoBtn.onClick = autoBuild
 		add(body, w.autoBtn.inst)
 
-		local pc = new("Frame", { BackgroundTransparency = 1, Size = UDim2.new(1, 0, 0, 30) })
-		add(body, pc)
-		w.pauseBtn = button("PAUSE", "secondary", 30)
-		w.pauseBtn.inst.Size = UDim2.new(0.5, -3, 1, 0)
-		w.pauseBtn.inst.Parent = pc
-		w.pauseBtn.onClick = pauseOrResume
-		w.cancelBtn = button("CANCEL", "danger", 30)
-		w.cancelBtn.inst.Size = UDim2.new(0.5, -3, 1, 0)
-		w.cancelBtn.inst.Position = UDim2.new(0.5, 3, 0, 0)
-		w.cancelBtn.inst.Parent = pc
-		w.cancelBtn.onClick = cancel
+		-- STOP
+		w.stopBtn = button("STOP", "danger", 30)
+		w.stopBtn.onClick = stop
+		add(body, w.stopBtn.inst)
 
-		-- one status line; click it to copy the debug log
+		-- one small status line (click it to copy the debug log)
 		w.statusBtn = new("TextButton", {
 			BackgroundTransparency = 1, AutoButtonColor = false, Size = UDim2.new(1, 0, 0, 0),
 			AutomaticSize = Enum.AutomaticSize.Y, Text = "", TextColor3 = T.muted, Font = T.font, TextSize = 12,
@@ -1694,47 +1673,37 @@ local function buildGui()
 			return
 		end
 		safe("render", function()
-			local busy = S.state == "building" or S.state == "waiting" or S.state == "paused"
-			local owned, source = readOwned()
+			local busy = S.state == "building"
+			local owned = readOwned()
+			local needed = busy and math.max(0, S.total - S.placed) or S.needed
 
 			w.areaBtn.inst.Text = (S.pick == "A" and "CLICK POINT A...") or (S.pick == "B" and "CLICK POINT B...")
 				or (S.min and ("SELECT AREA  ·  " .. dimsText())) or "SELECT AREA"
 			w.areaBtn.setEnabled(not busy)
-			w.blockBtn.inst.Text = S.block and ("BLOCK: " .. S.block.name) or "SELECT BLOCK"
-			w.blockBtn.setEnabled(not busy)
 
-			local needed = S.needed
-			if busy then
-				needed = math.max(0, S.total - S.placed)
-			end
-			w.needed.Text = needed and fmt(needed) or (S.order and "..." or "-")
-			w.needed.TextColor3 = T.text
+			w.blockLabel.Text = S.block and ("BLOCK: " .. string.upper(S.block.name)) or "BLOCK: EQUIP ONE"
+			w.needed.Text = "NEEDED: " .. (needed ~= nil and fmt(needed) or (S.order and "..." or "-"))
 
 			if not w.owned:IsFocused() then
-				w.owned.Text = owned ~= nil and fmt(owned):gsub(",", "") or ""
+				w.owned.Text = owned ~= nil and tostring(owned) or ""
 			end
-			w.owned.PlaceholderText = S.block and "type #" or "-"
-			local short = needed ~= nil and owned ~= nil and owned < needed
-			w.owned.TextColor3 = short and T.red or T.green
 			if owned == nil then
 				w.owned.TextColor3 = T.text
+			elseif needed ~= nil and owned < needed then
+				w.owned.TextColor3 = T.red
+			else
+				w.owned.TextColor3 = T.green
 			end
 
-			local label, canStart = "AUTO BUILD", S.order ~= nil and S.block ~= nil and not S.pick
+			local label = "AUTO BUILD"
 			if S.state == "building" then
 				label = string.format("BUILDING  %s/%s", fmt(S.placed), fmt(S.total))
-			elseif S.state == "waiting" then
-				label = string.format("WAITING FOR BLOCKS  %s/%s", fmt(S.placed), fmt(S.total))
-			elseif S.state == "paused" then
-				label = string.format("PAUSED  %s/%s", fmt(S.placed), fmt(S.total))
 			elseif S.state == "done" then
 				label = string.format("DONE  %s/%s", fmt(S.placed), fmt(S.total))
 			end
 			w.autoBtn.inst.Text = label
-			w.autoBtn.setEnabled(canStart and not busy)
-			w.pauseBtn.inst.Text = (S.state == "paused") and "RESUME" or "PAUSE"
-			w.pauseBtn.setEnabled(busy)
-			w.cancelBtn.setEnabled(busy or S.pick ~= nil or S.a ~= nil)
+			w.autoBtn.setEnabled(S.order ~= nil and not busy and not S.pick)
+			w.stopBtn.setEnabled(busy or S.pick ~= nil)
 
 			w.statusBtn.Text = S.status
 			w.statusBtn.TextColor3 = STATUS_COLOR[S.statusKind] or T.muted
@@ -1758,14 +1727,19 @@ safe("detectGrid", function()
 		log("INFO", "grid not detected yet - it will be learned from the first block you click or place")
 	end
 end)
+safe("detectBlock", detectBlock)
 render()
 
--- 4x per second: keep the numbers fresh, re-count the empty cells while you're only planning
+-- 4x per second: follow the block in your hand, keep the numbers fresh, and (while you're only
+-- planning) re-count the empty cells so NEEDED follows what you place yourself.
 task.spawn(function()
 	while ARB.alive do
 		task.wait(0.25)
 		safe("tick", function()
-			local idle = S.state == "idle" or S.state == "done"
+			local idle = S.state ~= "building"
+			if idle then
+				detectBlock()
+			end
 			if S.order and not S.pick and idle and S.count <= 3000 and os.clock() - (S.lastCount or 0) > 3 then
 				S.lastCount = os.clock()
 				task.spawn(countUnfilled)
@@ -1775,5 +1749,5 @@ task.spawn(function()
 	end
 end)
 
-status("Press SELECT AREA to begin.  (RightShift hides the menu)", "info")
+status("Hold a block, press SELECT AREA, then AUTO BUILD.  (RightShift hides the menu)", "info")
 log("INFO", "ready - the menu should be visible now (top-right)")
