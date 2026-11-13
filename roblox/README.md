@@ -23,8 +23,11 @@ No installation, nothing in any Roblox service, no Studio.
 | **AUTO BUILD** | places the blocks one at a time; the button shows real progress (`BUILDING 8/36`) |
 | **STOP** | stops at once (no further clicks) |
 
-RightShift hides/shows the menu. Keep the whole area on screen, stay within the game's placement range, and don't
-touch the mouse while it builds.
+RightShift hides/shows the menu. Keep the whole area on screen (not under Roblox's top bar or the bottom hotbar), stay
+within the game's placement range, and don't touch the mouse while it builds.
+
+While you click the two corners, SELECT AREA puts your block away (so the game's own click handling can't place stray
+blocks at the corners); AUTO BUILD takes it out again by itself.
 
 ## How it places blocks
 

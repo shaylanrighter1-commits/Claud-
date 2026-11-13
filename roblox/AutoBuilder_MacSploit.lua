@@ -723,26 +723,51 @@ local function rawMove(x, y)
 	end
 end
 
+-- VirtualInputManager can exist without actually moving the cursor; if the executor has its own
+-- mouse functions, use those instead.
+function Input.switchToExecutor()
+	if Input.vim and mousemoveabs ~= nil and mouse1click ~= nil then
+		Input.vim, Input.method = nil, "executor mouse functions"
+		Input.off = Vector2.new(0, 0)
+		log("WARN", "VirtualInputManager didn't work - switching to the executor's mouse functions")
+		return true
+	end
+	return false
+end
+
 -- Moves the cursor and confirms (with GetMouseLocation) that it really is there before returning true.
 function Input.moveTo(x, y)
-	for _ = 1, 5 do
+	local target = Vector2.new(x, y)
+	local lastErr = nil
+	for _ = 1, 6 do
 		rawMove(x + Input.off.X, y + Input.off.Y)
-		task.wait(0.03)
-		local err = Vector2.new(x, y) - UIS:GetMouseLocation()
+		task.wait(0.05)
+		local err = target - UIS:GetMouseLocation()
 		if math.abs(err.X) <= 3 and math.abs(err.Y) <= 3 then
 			return true
 		end
-		Input.off = Input.off + err -- learn the offset between what we send and where the cursor lands
-		if Input.off.Magnitude > 200 then
-			Input.off = Vector2.new(0, 0)
-			return false
+		-- Learn the offset between what we send and where the cursor lands - but only once the SAME
+		-- error shows up twice in a row, so one late / stale reading can't poison it.
+		if lastErr and (err - lastErr).Magnitude <= 3 then
+			Input.off = Input.off + err
+			lastErr = nil
+			if Input.off.Magnitude > 200 then
+				Input.off = Vector2.new(0, 0)
+				return false
+			end
+		else
+			lastErr = err
 		end
 	end
 	Input.off = Vector2.new(0, 0)
 	return false
 end
 
+-- Returns false (and sends nothing) unless the cursor is really on the target right now.
 function Input.click(x, y)
+	if (UIS:GetMouseLocation() - Vector2.new(x, y)).Magnitude > 4 then
+		return false
+	end
 	if Input.vim then
 		Input.vim:SendMouseButtonEvent(x + Input.off.X, y + Input.off.Y, 0, true, game, 1)
 		task.wait(0.04)
@@ -750,6 +775,7 @@ function Input.click(x, y)
 	else
 		mouse1click()
 	end
+	return true
 end
 
 ----------------------------------------------------------------------------------------------
@@ -841,8 +867,9 @@ local function findAim(cell)
 
 	local function screenOf(point)
 		local sp, on = cam:WorldToViewportPoint(point)
-		if not on or sp.Z <= 0 or sp.X < 8 or sp.Y < 8 or sp.X > view.X - 8 or sp.Y > view.Y - 8 then
-			why = "off screen - keep the whole area in view"
+		-- (keep clear of Roblox's own top bar / chat and the bottom hotbar, which a click would hit instead)
+		if not on or sp.Z <= 0 or sp.X < 8 or sp.Y < 64 or sp.X > view.X - 8 or sp.Y > view.Y - 90 then
+			why = "off screen or under the top/bottom bars - keep the whole area in the middle of the screen"
 			return nil
 		end
 		if overFrameAt(UI.window, sp.X, sp.Y) or overFrameAt(UI.reopen, sp.X, sp.Y) then
@@ -886,11 +913,15 @@ end
 ----------------------------------------------------------------------------------------------
 -- 10. Placing one block, and checking that it really happened
 ----------------------------------------------------------------------------------------------
--- returns "placed" | "failed" | "noaim" | "nocursor" | "misplaced", extra
-local function placeCell(cell)
+-- returns "placed" | "failed" | "noaim" | "nocursor" | "misplaced" | "stopped", extra
+-- `run` is the build this click belongs to: if STOP is pressed (runId changes) NO click is sent.
+local function placeCell(cell, run)
 	local aim, why = findAim(cell)
 	if not aim then
 		return "noaim", why
+	end
+	if S.runId ~= run then
+		return "stopped"
 	end
 	local s = S.grid.size
 	local center = cellCenter(cell)
@@ -903,15 +934,32 @@ local function placeCell(cell)
 	local okMove, moved = pcall(Input.moveTo, aim.x, aim.y)
 	if not okMove then
 		log("ERROR", "mouse move failed:", moved)
+		if Input.switchToExecutor() then
+			return "failed"
+		end
 		return "nocursor", "this executor's mouse control errored (see console)"
 	end
 	if not moved then
+		if Input.switchToExecutor() then
+			return "failed"
+		end
 		return "nocursor", "couldn't move the mouse to the target"
 	end
-	local okClick, clickErr = pcall(Input.click, aim.x, aim.y)
+	-- Last check before the click. Nothing yields between this and Input.click's own position check,
+	-- so STOP can never be followed by a click.
+	if S.runId ~= run then
+		return "stopped"
+	end
+	local okClick, clicked = pcall(Input.click, aim.x, aim.y)
 	if not okClick then
-		log("ERROR", "mouse click failed:", clickErr)
+		log("ERROR", "mouse click failed:", clicked)
+		if Input.switchToExecutor() then
+			return "failed"
+		end
 		return "nocursor", "this executor's mouse click errored (see console)"
+	end
+	if clicked == false then
+		return "nocursor", "the cursor moved away from the target, so I didn't click"
 	end
 
 	local newPart
@@ -1023,7 +1071,8 @@ local function runBuild(run)
 
 	local fails = 0
 	for pass = 1, 2 do
-		local deferred, lastWhy = {}, nil
+		fails = 0
+		local deferred, lastWhy, noaimCount = {}, nil, 0
 		for _, i in ipairs(todo) do
 			if S.runId ~= run then
 				return
@@ -1034,24 +1083,37 @@ local function runBuild(run)
 			if cellOccupied(cell) then
 				S.total -= 1 -- filled in the meantime: skip it, don't spend a block
 			else
-				local owned = readOwned()
-				if owned ~= nil and owned <= 0 then
-					return stopBuild(run, string.format("Out of blocks. Placed %d of %d - get more, then press AUTO BUILD to carry on.", S.placed, S.total), "error")
-				end
-				if not ensureEquipped() then
-					return stopBuild(run, "Stopped: hold '" .. S.block.name .. "' in your hand.", "error")
-				end
-				if S.runId ~= run then
-					return
-				end
-
-				local result, extra = placeCell(cell)
-				if result == "failed" then
-					task.wait(0.25) -- one retry (the game may have a short placement cooldown)
+				local result, extra
+				for attempt = 1, 2 do
 					if S.runId ~= run then
 						return
 					end
-					result, extra = placeCell(cell)
+					-- every click (the retry too) goes through the same checks
+					local owned = readOwned()
+					if owned == nil or owned <= 0 then
+						-- (nil = the stack disappeared, which is what some games do when it reaches zero)
+						return stopBuild(run, string.format("Out of blocks. Placed %d of %d - get more, then press AUTO BUILD to carry on.", S.placed, S.total), "error")
+					end
+					if not ensureEquipped() then
+						return stopBuild(run, "Stopped: hold '" .. S.block.name .. "' in your hand.", "error")
+					end
+					if S.runId ~= run then
+						return
+					end
+					result, extra = placeCell(cell, run)
+					if result ~= "failed" or attempt == 2 then
+						break
+					end
+					task.wait(0.25) -- the game may have a short placement cooldown: look again, then retry once
+					if S.runId ~= run then
+						return
+					end
+					refreshOverlapFilter()
+					if cellOccupied(cell) then
+						result = "placed" -- it showed up late (laggy server): never click a filled cell again
+						log("INFO", string.format("block appeared late in cell (%d,%d,%d)", cell.x, cell.y, cell.z))
+						break
+					end
 				end
 
 				if S.runId ~= run then
@@ -1073,6 +1135,10 @@ local function runBuild(run)
 				elseif result == "noaim" then
 					deferred[#deferred + 1] = i
 					lastWhy = extra
+					noaimCount += 1
+					if noaimCount % 8 == 0 then
+						task.wait() -- many un-aimable cells: give the game a frame so it never freezes
+					end
 				elseif result == "misplaced" or result == "nocursor" then
 					return stopBuild(run, "Stopped: " .. tostring(extra) .. ".", "error")
 				else -- "failed": the click didn't produce a block
@@ -1117,9 +1183,17 @@ local function autoBuild()
 		status("Select an area first.", "error")
 		return
 	end
+	if S.worker then
+		status("Still stopping the last build - one moment.", "info")
+		return
+	end
 	detectBlock()
 	if not S.block then
 		status("Equip a block in your hotbar first.", "error")
+		return
+	end
+	if looksLikeTool(S.block.name) then -- (checked BEFORE anything gets equipped)
+		status("'" .. S.block.name .. "' looks like a tool - clicking with it could break blocks. Hold the block you want to place.", "error")
 		return
 	end
 	if not Input.method then
@@ -1128,10 +1202,6 @@ local function autoBuild()
 	end
 	if not ensureEquipped() then
 		status("Hold '" .. S.block.name .. "' in your hand first.", "error")
-		return
-	end
-	if looksLikeTool(S.block.name) then
-		status("'" .. S.block.name .. "' looks like a tool - clicking with it could break blocks. Hold the block you want to place.", "error")
 		return
 	end
 	local owned = readOwned()
@@ -1145,16 +1215,18 @@ local function autoBuild()
 		status("You have no " .. S.block.name .. " left.", "error")
 		return
 	end
-	if S.state == "building" then
+	if S.state == "building" or S.worker then
 		return -- a second click arrived while the checks above were running
 	end
 	S.runId += 1
 	local run = S.runId
 	S.state = "building"
+	S.worker = true -- true while a build coroutine is still alive (even just unwinding after STOP)
 	S.placed, S.total = 0, 0
 	status("Building...", "info")
 	task.spawn(function()
 		safe("build", runBuild, run)
+		S.worker = false
 		if S.runId == run and S.state == "building" then
 			S.state = "idle" -- the loop died unexpectedly; never leave the menu stuck
 			status("The build stopped because of an error (see the console).", "error")
@@ -1260,9 +1332,19 @@ local function startPicking()
 	if not S.grid.confirmed then
 		detectGrid()
 	end
+	-- With the block in hand, the game's own click handling could place a block at each corner you
+	-- click while choosing the area. Put it away for the selection; AUTO BUILD takes it out again.
+	detectBlock()
+	local char = LocalPlayer.Character
+	local hum = char and char:FindFirstChildOfClass("Humanoid")
+	if hum and char:FindFirstChildOfClass("Tool") then
+		pcall(function()
+			hum:UnequipTools()
+		end)
+	end
 	S.pick = "A"
 	bindPick()
-	status("Click the first corner (Point A).", "info")
+	status("Click the first corner (Point A). Your block is put away while you choose.", "info")
 end
 
 handleClick = function()
@@ -1566,6 +1648,10 @@ local function buildGui()
 		w.owned.FocusLost:Connect(function()
 			safe("owned box", function()
 				local txt = string.gsub(w.owned.Text, "[,%s]", "")
+				if txt == tostring(w.ownedShown or "") then
+					render() -- just clicked in and out without editing: keep reading the game's real count
+					return
+				end
 				if txt == "" then
 					S.manualOwned = nil -- empty = read it from the game again
 				else
@@ -1685,7 +1771,8 @@ local function buildGui()
 			w.needed.Text = "NEEDED: " .. (needed ~= nil and fmt(needed) or (S.order and "..." or "-"))
 
 			if not w.owned:IsFocused() then
-				w.owned.Text = owned ~= nil and tostring(owned) or ""
+				w.ownedShown = owned ~= nil and tostring(owned) or ""
+				w.owned.Text = w.ownedShown
 			end
 			if owned == nil then
 				w.owned.TextColor3 = T.text
@@ -1698,11 +1785,13 @@ local function buildGui()
 			local label = "AUTO BUILD"
 			if S.state == "building" then
 				label = string.format("BUILDING  %s/%s", fmt(S.placed), fmt(S.total))
+			elseif S.worker then
+				label = "STOPPING..." -- the last click is still being checked; no new build until it ends
 			elseif S.state == "done" then
 				label = string.format("DONE  %s/%s", fmt(S.placed), fmt(S.total))
 			end
 			w.autoBtn.inst.Text = label
-			w.autoBtn.setEnabled(S.order ~= nil and not busy and not S.pick)
+			w.autoBtn.setEnabled(S.order ~= nil and not busy and not S.pick and not S.worker)
 			w.stopBtn.setEnabled(busy or S.pick ~= nil)
 
 			w.statusBtn.Text = S.status
