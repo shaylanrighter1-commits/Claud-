@@ -1,219 +1,87 @@
-# ABOVE[RUINS] | Auto Builder
+# ABOVE[RUINS] | Auto Builder — MacSploit script
 
-A complete Auto Builder system for Roblox, written from scratch in Luau. Pick two corners on your
-land, see an orange construction preview, choose a block type, see exactly how many blocks it
-costs, and watch the structure build itself block by block — spending real blocks from your
-inventory.
+One file: **`AutoBuilder_MacSploit.lua`**. Paste it into MacSploit while you're in ABOVE[RUINS] and
+press Execute. Nothing to install, no Studio, no scripts in ServerScriptService / StarterPlayerScripts /
+ReplicatedStorage. Everything runs on your client.
 
-> **Status: not yet run in Roblox Studio.** This was written and reviewed without access to Studio
-> (and without your game's source — only the screenshot). The code has been read through carefully,
-> but treat the first Play test as the real test and send me any red text from the Output window.
-> The optional self-test in `tests/PlannerTests.lua` checks the geometry/counting logic in Studio.
+> **Status: not yet run in MacSploit.** I can't run Roblox or an executor here, so this was written and
+> reviewed by reading only. If something doesn't work, the in-window **DEBUG LOG** (and the F9 console)
+> will say why — send me that text.
+>
+> Running scripts through an executor is against Roblox's Terms of Use and can get an account banned.
 
-It ships with its own **test world** (a plot of land per player, an inventory, four block types,
-resource crates) so you can try everything in a blank Baseplate. Nothing here reads ABOVE[RUINS]'s
-real inventory or building code — see [Using it in your real game](#using-it-in-your-real-game).
+## Run it
 
----
+1. Join the game. 2. Paste the whole file into MacSploit. 3. Execute.
 
-## 1. Install (pick one)
+The window is built and mounted **first**, before anything else, so it appears immediately (top-right).
+**RightShift** hides/shows it, **×** closes it (an AUTO BUILDER button appears bottom-left), **–** minimizes,
+drag the title bar to move it. Executing the script again replaces the old copy.
 
-### A. One paste (easiest)
-1. Open a Baseplate place in Roblox Studio.
-2. **View → Command Bar** (turn it on).
-3. Open `roblox/Install_AutoBuilder.lua`, copy **everything**, paste into the Command Bar, press **Enter**.
-4. Output should print `[AutoBuilder] Installed 7 scripts.`
+## If you don't see the window
 
-If pasting that much text is slow or fails, use option B or C.
+The script tries three places in order: `gethui()`, `CoreGui`, then `PlayerGui`, and logs which one worked
+(`[AutoBuilder] window mounted in: ...`). It also re-mounts the window if the game deletes it.
 
-### B. Rojo
-```bash
-cd roblox
-rojo serve        # then Connect from the Rojo plugin in Studio
-```
-`default.project.json` maps `src/` to the right services.
+- Open the console (**F9** in-game, or MacSploit's console) and look for `[AutoBuilder]` lines.
+- Set `CONFIG.CONTAINER = "playergui"` (or `"coregui"` / `"gethui"`) at the top of the script and execute again.
+- `[ERROR]` lines mean a specific part failed; every part is isolated, so the rest of the window still loads.
+  Open **DEBUG LOG** at the bottom of the window — it pops open by itself on an error. **COPY** puts the log
+  on your clipboard.
 
-### C. By hand
-Create these and paste each file's contents (`roblox/src/...`) into a script of the stated type:
+## Using it
 
-| Where in Studio | Name | Type | File |
-|---|---|---|---|
-| ReplicatedStorage → **AutoBuilder** (Folder) | `Config` | ModuleScript | `ReplicatedStorage/AutoBuilder/Config.lua` |
-| ReplicatedStorage → AutoBuilder | `BuildPlanner` | ModuleScript | `ReplicatedStorage/AutoBuilder/BuildPlanner.lua` |
-| ServerScriptService → **AutoBuilder** (Folder) | `AutoBuilderServer` | **Script** | `ServerScriptService/AutoBuilder/AutoBuilderServer.server.lua` |
-| ServerScriptService → AutoBuilder | `StandaloneBackend` | ModuleScript | `ServerScriptService/AutoBuilder/StandaloneBackend.lua` |
-| StarterPlayer → StarterPlayerScripts → **AutoBuilderClient** (Folder) | `Main` | **LocalScript** | `.../AutoBuilderClient/Main.client.lua` |
-| StarterPlayerScripts → AutoBuilderClient | `UI` | ModuleScript | `.../AutoBuilderClient/UI.lua` |
-| StarterPlayerScripts → AutoBuilderClient | `Preview` | ModuleScript | `.../AutoBuilderClient/Preview.lua` |
+1. **Calibrate the grid (do this first).** I can't know ABOVE[RUINS]'s block size, so press
+   **CALIBRATE FROM A BLOCK** and click one *placed block* (not the ground). It reads that block's size and
+   position and snaps everything to it. (Or type the size, default 4 studs.)
+2. **Select the area.** **SELECT BUILD AREA** → click one corner (Point A) → click the opposite corner (Point B);
+   the orange preview follows your cursor. Or walk to a corner and press **A = MY POSITION** / **B = MY POSITION**.
+   **RESET SELECTION** clears it. Clicking the ground selects the layer *above* it (switchable under "Click selects").
+3. **Choose a mode:** Floor, Wall (straight or surround), Fill, Hollow Box — with height/thickness. The bright
+   orange outline + translucent fill show exactly the blocks that will exist.
+4. **Material & inventory.** Pick a material (add your own with the name box). It tries to read your count from
+   the game (a value, a Tool, or the "x686" text beside the item name in your hotbar) and tells you which source
+   it used. If it can't, or reads it wrong, **type the number** in *Available* (that switches to MANUAL; **AUTO**
+   switches back).
+5. **Requirements** show Required / Available / Missing / Progress, and
+   `NOT ENOUGH RESOURCES — COLLECT n MORE ...` when you're short. Blocks already standing in the area are detected
+   and subtracted.
+6. **START BUILDING** starts *guided tracking*: the next blocks to place glow, and the progress bar follows the
+   blocks you place. **PAUSE / RESUME / CANCEL BUILD** work as named. When every cell is filled it says
+   "Build complete" and removes the preview.
 
-Names matter — the scripts find each other by name.
+## What it does NOT do — and what real auto-building would need
 
----
+It does **not** place blocks, fire any RemoteEvent/RemoteFunction, edit your inventory, or contact the server.
+Block placement in a Roblox game happens on the server, which validates every placement (range, ownership,
+inventory). A client script can't legitimately do that for you, and I won't guess at or call the game's private
+remotes — that would be exploiting the game, and it's against what you asked for too.
 
-## 2. Try it (about 2 minutes)
+Automatic placement becomes possible only through an interface the game itself provides:
 
-Press **Play (F5)**. You spawn on a green plot with your name floating over it. Four colored
-**resource crates** sit behind you. The menu is on the right (**B** toggles it; **×** closes it and
-leaves an AUTO BUILDER button top-left; **–** minimizes; drag the title bar to move it).
+- **The game's developer exposes one** — e.g. an official "blueprint / copy-paste / fill" tool, or a documented
+  API for builders. Then this script's planner (`PL.plan` + `PL.buildOrder`, which produce the exact cell list in
+  build order) could feed that interface, one request at a time, at a rate the game allows. I'd need its
+  documentation to wire it in.
+- **You are the developer of ABOVE[RUINS].** Then the right place for this is the game itself: a server script
+  that checks land ownership, takes one block from the player's inventory per placement, and places it with the
+  game's own placement code. An earlier Studio version of this project did exactly that (git history, commit
+  `731e306`, folder `roblox/src`).
 
-1. Click **SELECT BUILD AREA**. Status says *SELECT POINT A*.
-2. Click a block/ground near one corner of your plot → an orange **POINT A** marker + beam appears.
-3. Move the mouse: an orange preview stretches from A to your cursor (red if it would leave your land).
-4. Click the opposite corner → **POINT B**. The preview locks in and **Build Options** appear.
-5. Choose **FLOOR**, thickness 1, **Grass Block**. For a 12 × 10 area the panel reads:
-   ```
-   BUILD REQUIREMENTS
-   Grass Blocks Required: 120
-   Grass Blocks Available: 75
-   Grass Blocks Missing: 45
-   Progress: 75 / 120
-   NOT ENOUGH RESOURCES — COLLECT 45 MORE GRASS BLOCKS
-   ```
-   **START BUILDING** is greyed out. (You start with 75 grass, 100 dirt, 100 stone, 0 planks.)
-6. Walk to the **Grass Block Crate**, hold **E** (tap on mobile) — each use gives 25. Watch *Available*
-   count up live. At 120 the banner turns green and START unlocks.
-7. Press **START BUILDING**. Blocks appear one by one in a snake pattern, bottom layer first:
-   ```
-   AUTO BUILDER ACTIVE
-   Building: Grass Floor
-   Blocks Placed: 45 / 120
-   Progress: 37.5%
-   Status: Constructing...
-   ```
-   Your inventory drops by exactly one per block. When it finishes the orange preview disappears.
-8. Try **PAUSE / RESUME**, **CANCEL BUILD** (placed blocks stay; unplaced blocks were never taken),
-   the other modes, **SLOW → TURBO** speeds, and selecting over blocks you already built (they're
-   skipped and not charged — nothing is ever overwritten).
+Until then, the guided tracker is the practical version: you place the blocks, it tells you where and counts them.
 
-**Simulate running out mid-build** (Play → in the Command Bar switch to the *Server* context):
-```lua
-local B = require(game.ServerScriptService.AutoBuilder.StandaloneBackend)
-B.takeBlocks(game.Players:GetPlayers()[1], "grass_block", 30)
-```
-The build pauses with *NOT ENOUGH RESOURCES — COLLECT n MORE…*; collect blocks and press **RESUME**.
+## Settings (top of the script)
 
-**Mobile:** use Studio's *Device Emulator* (or a phone). Tap SELECT BUILD AREA, then **tap** (don't
-drag) a block for each corner — dragging still rotates the camera.
+`CONTAINER`, `TOGGLE_KEY`, `GRID_SIZE`, `GRID_ORIGIN`, `SELECT_ADJACENT`, `MATERIALS`, size limits,
+`DETECT_EXISTING`, `MAX_TRACK_CELLS`, and the "what counts as a block" thresholds `OCC_MIN_FRACTION` /
+`OCC_MAX_MULT` (ground plates and small decorations like flowers are ignored when detecting existing blocks).
 
-**Optional self-test:** paste `tests/PlannerTests.lua` into the Command Bar. Expect
-`PlannerTests: ALL PASSED`.
+## Known limitations
 
----
-
-## 3. Build modes
-
-| Mode | What it builds | Settings |
-|---|---|---|
-| **Floor** | Flat slab over the rectangle | Thickness (layers, builds upward from the A/B layer) |
-| **Wall** | Vertical wall. *Straight*: along the longer side, starting at Point A's edge and growing toward B. *Surround*: all four sides | Height, Thickness, Layout |
-| **Fill** | Solid block of the whole volume | Height |
-| **Hollow Box** | Outer walls + floor + ceiling, empty inside (very small boxes just fill solid) | Height |
-
-*Height:* if Point A and B are on different layers, the height comes from the two points (the
-stepper locks and says so). If they're on the same layer, use the Height stepper.
-
-The orange preview shows **exactly the blocks that will be built** — a hollow box draws its six
-shell pieces, a wall draws only the wall. The preview, the block count and the placement all come from the
-same `BuildPlanner` plan, so they can't disagree.
-
----
-
-## 4. How it works
-
-```
-ReplicatedStorage/AutoBuilder
-  Config            all tunables, theme, messages (shared)
-  BuildPlanner      pure geometry: cells, counts, build order  (client preview + server truth)
-ServerScriptService/AutoBuilder
-  AutoBuilderServer remotes, validation, jobs, placement loop, inventory pushes
-  StandaloneBackend test world: plots, inventory, blocks, crates   <-- the only game-specific file
-StarterPlayerScripts/AutoBuilderClient
-  Main              selection state machine, input (mouse + touch), talks to the server
-  UI                the menu (built in code, no assets)
-  Preview           orange boxes, A/B markers, hover ghost, size label (client-only parts)
-```
-
-**Server is the authority.** The client sends only two cells, a few option choices and a speed.
-`AutoBuilderServer` ignores any counts/ownership the client claims and, for every request:
-
-- validates types/ranges (finite integers, known mode/material, clamped sizes and speed),
-- rebuilds the plan itself and checks the size limits,
-- checks **every cell** is on land the player owns **and** inside the world,
-- counts only cells that are still **empty** (existing blocks are skipped, never overwritten),
-- refuses to start unless the player holds **every block needed**,
-- one build per player at a time; per-remote rate limits.
-
-**No free or duplicated blocks.** Per block the server does: *take 1 from inventory → place it → if
-placing failed, give the 1 back*. Ownership and emptiness are re-checked at the moment of each
-placement. If the player runs out, the build pauses (it never places on credit). Cancel just stops —
-blocks are only ever taken one at a time as they are placed, so unused materials are untouched.
-Leaving the game cancels the build.
-
----
-
-## 5. Configuration (`ReplicatedStorage/AutoBuilder/Config`)
-
-| Setting | Default | Meaning |
-|---|---|---|
-| `DEFAULT_SPEED` / `SPEED_PRESETS` | 12 / 5-12-30-60 blocks/sec | Construction speed. Server clamps to `MIN_SPEED`–`MAX_SPEED` |
-| `MAX_BLOCKS_PER_JOB`, `MAX_DIMENSION`, `MAX_HEIGHT`, `MAX_THICKNESS` | 20000 / 128 / 64 / 16 | Server-enforced size limits |
-| `SELECT_ADJACENT_CELL` | `true` | Click the ground → select the layer *above* it (like placing a block). `false` = the clicked block's own cell |
-| `TOGGLE_KEY` | `B` | Menu shortcut (`nil` disables) |
-| `WORLD_MAX_ABS_STUDS`, `WORLD_MAX_Y_STUDS` | 8000 / 4000 | Playable-world limits |
-| `Theme` | dark + orange | Colors/fonts for the menu and preview |
-
-Test-world settings (grid size, plot size, starter blocks, crate amount, block types) are at the top
-of `StandaloneBackend.lua`.
-
----
-
-## 6. Using it in your real game
-
-I did not have ABOVE[RUINS]'s code, so I did not hook into its inventory, land or block-placement
-systems — and I won't pretend to. The Auto Builder only ever calls the functions below, all in one
-module. To integrate: write a module with the same functions backed by your game's systems, then change
-the single `require(... "StandaloneBackend")` line in `AutoBuilderServer.server.lua`.
-
-| Function | What it must do |
-|---|---|
-| `init()` | one-time setup |
-| `onPlayerAdded(player)` / `onPlayerRemoving(player)` | set up / clean up per-player state (a real game usually does nothing here) |
-| `canUse(player)` → `bool, reason?` | gate the feature (gamepass, safe zone…) |
-| `getGrid()` → `{size, origin}` | studs per block and the world position of cell (0,0,0)'s min corner, so the preview snaps to *your* grid |
-| `getMaterials()` → `{ {id, name, color}, … }` | the buildable blocks that exist in your game |
-| `getBlockCount(player, id)` | how many the player holds |
-| `takeBlocks(player, id, n)` → `bool` | remove `n` **atomically**; return `false` and change nothing if they don't have `n` |
-| `giveBlocks(player, id, n)` | put `n` back (refund for a failed placement) |
-| `getPlot(player)` → `{min, max}` or `nil` | the player's land as inclusive grid-cell bounds (for the client preview) |
-| `isCellOwned(player, cell)` → `bool` | may this player build in this cell? (authoritative; handle non-rectangular land here) |
-| `isCellOccupied(cell)` → `bool` | is a block/structure already there? |
-| `placeBlock(player, id, cell)` → `bool` | place ONE block using your game's real placement function. It must **not** deduct inventory itself (the builder already did) and must return `false` if the cell is blocked |
-
-`cell` is a `Vector3` of integers: cell `c` occupies the world cube `[origin + c*size, origin + (c+1)*size)`.
-If you send me your inventory / land / placement scripts I can write this module for you.
-
----
-
-## 7. Known limitations
-
-- **Untested in Studio** (see the status note up top). Most likely trouble spots: UI layout on unusual
-  screen sizes, and the click-capture while the player holds a placeable block (selection mode binds the
-  click at high priority and unequips tools, but a game with its own click-to-place code may still need
-  a one-line check against `ContextActionService`/`gameProcessed`).
-- The orange outline in your screenshot looks like your land's boundary box. The Auto Builder draws a faint
-  version of your land's outline only while picking corners, and the orange build preview itself; it does not
-  touch whatever draws the boundary in your game.
-- A build doesn't survive the player leaving or the server restarting.
-- Land is assumed rectangular in the *client* preview (`getPlot`); the *server* check is per-cell, so odd-shaped land
-  is safe as long as `isCellOwned` is correct.
-- 20,000 anchored parts is a lot for clients; lower `MAX_BLOCKS_PER_JOB` for big public servers.
-
-## 8. Troubleshooting
-
-| Symptom | Check |
-|---|---|
-| No menu | Output should show `[AutoBuilder] Server ready.` If not, the server Script isn't running or a script is misnamed. Press **B**. |
-| "Server remotes not found" | `AutoBuilderServer` must be a **Script** (not Module/Local) inside ServerScriptService/AutoBuilder. |
-| "That spot is outside your land." | Pick corners on *your* green plot (the faint orange outline while selecting). |
-| START stays grey | Read the banner — usually missing blocks; collect from a crate. |
-| Blocks don't appear | Look in `workspace.AutoBuilderBlocks`; check Output for `[AutoBuilder]` warnings. |
+- Mouse only (it's written for Mac). If the game locks the mouse to the screen center (shift-lock / first
+  person), the window can't be clicked — use the third-person free cursor.
+- Selecting by click binds the left mouse button while you're picking, so the game shouldn't also react to that
+  click; if your hotbar still places a block, put an empty slot in your hand while picking.
+- Existing-block detection uses size thresholds; if it mis-counts for this game's blocks, adjust
+  `OCC_MIN_FRACTION` / `OCC_MAX_MULT` or turn **DETECT BLOCKS** off (progress tracking needs it on).
+- Reading your inventory is best-effort; always sanity-check the number it shows.
