@@ -1,76 +1,63 @@
-# ABOVE[RUINS] | Auto Builder — MacSploit script
+# ABOVE[RUINS] | AUTO BUILDER (MacSploit)
 
-One file: **`AutoBuilder_MacSploit.lua`**. Paste it into MacSploit while you're in the game and Execute.
-The status line shows the version (`v4 exact-cells + range`) so you can tell you're running the latest file.
+One file: `AutoBuilder_MacSploit.lua`. Paste the whole file into MacSploit and execute.
 
-> **Status: not yet run in MacSploit or in ABOVE[RUINS] by me.** I can't run either here. The hotbar and placement
-> logic is built from how your game looks in screenshots; if something fails, the status line names the failing part
-> and **clicking it copies the debug log**.
->
-> Running scripts through an executor is against Roblox's Terms of Use and can get an account banned; automated
-> clicking and walking may also break the game's own rules.
+```
+ABOVE[RUINS] | AUTO BUILDER
+[ SELECT AREA ]
+BLOCK: GRASS BLOCK
+NEEDED: 21 | OWNED: 555
+[ AUTO BUILD ]
+[ STOP ]
+STATUS: READY
+```
 
-## The flow (menu unchanged)
+1. `[ SELECT AREA ]`, then click corner A and corner B. The orange outline is exactly what gets filled.
+2. Select your block in the hotbar. The menu shows `BLOCK:` and `NEEDED | OWNED`.
+3. `[ AUTO BUILD ]`. `[ STOP ]` stops at once. If it stops because of a problem, fix it and press the same
+   button again: it now says `[ RESUME x/y ]` and carries on with the same count (nothing is placed twice).
+4. RightShift hides / shows the menu. Click the STATUS line to copy the debug log.
 
-**SELECT AREA → select your block in the hotbar → AUTO BUILD → STOP**
+## What it never does
+* Never walks, jumps or teleports your character. Never touches your camera.
+* Never calls the game's remotes, never touches your inventory, never bypasses server rules.
+* Never counts a block it did not see appear: a block is counted only when exactly one new, opaque,
+  block-sized part appears in exactly the cell that was aimed at.
 
-Rows are filled **left to right, one row after another, bottom layer first**. It builds slowly on purpose
-(accuracy over speed). While building it takes over the camera (looking straight down at each cell) and may walk your
-character to a safe spot; both are given back when it finishes or you press STOP.
+## What it does
+For each empty cell it finds a visible face next to it (from your camera exactly as you left it), moves the mouse
+there, clicks with your block in hand, and checks the result. Existing blocks are skipped. Rows are filled in one
+fixed order (bottom layer first, rows starting at the end farthest from you, every row in the same direction).
 
-## What was going wrong, and which side it came from
-
-**Client-side (my script's aiming/verification) — fixed in v4:**
-
-| Problem | Effect | Fix |
+## Why the earlier versions went wrong, and what changed
+| Problem you saw | Cause | Fix |
 |---|---|---|
-| The game's translucent green **placement preview** was counted as a real block | empty cells looked filled (skipped → gaps) and a preview could be counted as a placed block | only **opaque** parts count as blocks, everywhere |
-| The grid origin was **shifted after any nearby block-sized part** | target cells drifted mid-build → "strange positions" | the grid is aligned **once** from the real blocks around the area (and by the first block), then **never moved** |
-| Cells in a 1-block **trench** aren't visible from an ordinary camera angle | whole strips were never aimed at | camera looks **straight down** at each cell |
-| Snake row order, loose "a block appeared nearby" check | hard to reason about, wrong blocks accepted | fixed row order; a block must be **new, opaque, and exactly in the target cell** |
-| No protection against repeats | a cell could be clicked again | per-job registry; a filled cell is never clicked; hard cap `placed ≤ blocks counted at start`; counters reset every job |
+| Walked off the island | v4 auto-walked | walking and camera control **removed**; if a cell is out of reach it stops and tells you |
+| Blocks in the wrong cells, gaps | the game's translucent placement preview was accepted as a block; the grid origin could drift; trench cells were invisible to the camera | preview is ignored; grid is only aligned once (first block, <= 0.45 block) then never moved; every block must land in the aimed cell or the build stops |
+| Wrong progress | counted clicks / re-counted | `placed` counts only verified blocks, can never exceed `total`, resets for each new job |
+| Block not recognised | custom hotbar, no Tool objects | hotbar GUI is read directly (name, count, highlighted slot) |
 
-**The game's own rules (the script cannot change these, only respect them):**
+Client-side aiming (camera, cursor, visible faces) is the script's job; the placement distance, ownership and
+cooldowns are the **game's**. The script cannot know the real range: it learns it from refusals and then reports
+`[RANGE] OUT OF RANGE`. Cells your camera cannot see are reported as `[AIM]`: tilt / turn the camera and resume.
 
-- **Placement distance.** The game only places within some range of your character. I don't know the number, so the
-  script starts from a guess (20 studs, `CONFIG.PLACE_RANGE`), **never clicks beyond it**, and shortens it if the game
-  refuses a placement from far away.
-- Land ownership, placement cooldown, and which surfaces you may build on — the server decides; refusals show up as
-  `[PLACEMENT]`.
+Failure tags: `[ITEM] [INPUT] [AIM] [RANGE] [PLACEMENT] [DETECTION]`.
 
-## Range: what it does instead of standing still
+## What was tested, and what was NOT
+**Tested outside Roblox (simulated, Lua 5.5 via `lupa`):**
+* `python3 roblox/tests/run_core_tests.py`: 42 tests of the decision logic embedded in the script (build order,
+  checking a placed block's cell, counters, duplicate protection, range learning, stop / resume).
+* `python3 roblox/tests/run_glue_tests.py`: 20 tests that run the script's real `placeCell` / `runJob` / `autoBuild`
+  / `stop` against a simulated world: small areas, existing blocks, hidden cells, island edges, out-of-range,
+  interrupted builds, wrong placement, out of blocks, deselected block, grid offset.
+* Mutation checks: deliberately breaking the logic makes these tests fail (a few redundant safety checks are
+  intentionally duplicated and not individually detectable).
+* Static checks: block balance, no undefined names, no remote / hook references.
 
-Before every cell it checks your distance. If the cell is too far it **walks to a safe spot** within range of that cell
-and the next few (level solid ground only — pits, edges and walls are rejected; it uses the path finder, else a straight
-line only if the whole line is solid and level), then continues. It never stands inside the area being built. If there is
-no safe spot, the status says **`[RANGE] OUT OF RANGE: N blocks can't be reached`** and it stops — it does not try anyway.
-(Turn walking off with `CONFIG.AUTO_WALK = false`; then it reports OUT OF RANGE instead of moving.)
+**NOT tested: the real game.** The simulated world is my model of Roblox. Nothing here has run inside Roblox or
+ABOVE[RUINS]. Raycasts, the executor's mouse events, the custom hotbar reading, and whether the game accepts a click
+on a block face as a placement are untested. Expect to need one or two rounds of fixes after the first real run.
+If something fails, click the STATUS line, which copies the log, and send it to me.
 
-## How placement is verified (every block)
-
-1. aim: camera above the cell → cursor on a face next to it → **if the game's own preview is visible, it must point at
-   this cell, otherwise no click**,
-2. click, then watch **every new part that appears anywhere** for ~1.5 s,
-3. exactly **one** new opaque block-sized part must be in the target cell (first block of a job may adopt a small grid
-   offset; every later block must be within 0.2 of a cell of its exact position),
-4. a block anywhere else — including **outside the orange outline** — or two blocks from one click → **STOP** (`[PLACEMENT]`),
-5. only then is it counted. If your count dropped but no block was seen → `[DETECTION]` stop.
-
-## Failure tags
-
-`[ITEM]` couldn't identify/read the held item · `[INPUT]` mouse/click problem · `[AIM]` no visible place to click ·
-`[RANGE]` out of the placement range with no safe spot · `[PLACEMENT]` the game refused, or a block landed in the wrong
-place · `[DETECTION]` a block was used but not seen.
-
-## Honest limits
-
-- It cannot know the game's exact placement range or its placement preview's implementation; both are inferred/learned.
-- Walking uses the normal character controls and the game's own movement limits.
-- If the game has anti-macro checks, hold-to-place or a build mode, it will refuse the clicks (`[PLACEMENT]`).
-- Still never calls remotes or touches your inventory. Areas are capped at 5,000 blocks (`CONFIG.MAX_CELLS`).
-
-## For your own Studio game
-
-The Studio-side equivalent — server-checked range, ownership and inventory, plus moving the character to valid building
-positions — is **not** in this file. An earlier Studio version is in git history (commit `731e306`, `roblox/src`) and does
-not have movement yet; say the word and I'll add range checks + automatic movement there.
+Known limits: glass-like (translucent) blocks are not recognised as blocks; the aim needs a visible face next to
+each cell; running scripts through an executor is against Roblox's Terms of Use and can get an account banned.
