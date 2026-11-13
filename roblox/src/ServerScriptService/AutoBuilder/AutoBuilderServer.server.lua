@@ -201,6 +201,21 @@ local function evaluate(player, rawA, rawB, rawOptions)
 		return fail("OUTSIDE_WORLD")
 	end
 
+	-- Cheap O(1) early-out: a plan outside the land's bounding box can't be owned, so don't
+	-- walk up to 20,000 cells just to find that out. (The per-cell check below stays
+	-- authoritative, which is what makes odd-shaped land safe.)
+	local plot = Backend.getPlot(player)
+	if
+		not plot
+		or not Planner.planInside(
+			plan,
+			{ x = plot.min.X, y = plot.min.Y, z = plot.min.Z },
+			{ x = plot.max.X, y = plot.max.Y, z = plot.max.Z }
+		)
+	then
+		return fail("OUTSIDE_LAND")
+	end
+
 	local unowned, occupied, toPlace = 0, 0, 0
 	Planner.forEachCell(plan, function(x, y, z)
 		local cell = Vector3.new(x, y, z)
@@ -318,6 +333,7 @@ local function placeOne(job)
 			job.skipped += 1
 			job.total -= 1
 			job.index = i + 1
+			job.dirty = true -- progress changed: the Heartbeat flush sends it (throttled)
 		else
 			-- 1) take the block from the inventory first...
 			if not Backend.takeBlocks(player, job.materialId, 1) then
@@ -329,6 +345,7 @@ local function placeOne(job)
 			job.index = i + 1
 			if ok and result == true then
 				job.placed += 1
+				job.dirty = true
 				job.consecutiveFailures = 0
 				if job.index > order.n then
 					finishJob(job, "done")
@@ -341,6 +358,7 @@ local function placeOne(job)
 			end
 			job.skipped += 1
 			job.total -= 1
+			job.dirty = true
 			job.consecutiveFailures += 1
 			if job.consecutiveFailures >= 5 then
 				finishJob(job, "failed", "PLACE_FAILED")

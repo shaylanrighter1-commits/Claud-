@@ -1012,7 +1012,7 @@ function UI.new(playerGui, cb)
 
 		speedCaption.Text = string.format("BUILD SPEED  -  %d blocks / second", opts.speed)
 		speedSegmented.set(opts.speed)
-		speedSegmented.setLocked(false)
+		speedSegmented.setLocked(vm.optionsLocked) -- speed is fixed when a build starts
 
 		-- requirements
 		local req = vm.req

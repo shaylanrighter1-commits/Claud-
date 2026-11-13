@@ -610,7 +610,7 @@ callbacks.onStart = function()
 		queueQuote() -- numbers may have changed; refresh them
 	else
 		-- The server also pushes JobUpdate events; don't let this (older) copy overwrite a newer one.
-		if not jobActive() then
+		if S.job == nil then
 			S.job = result.job
 		end
 		preview:setBuilding(true)
@@ -666,7 +666,11 @@ local function onJobUpdate(snapshot)
 	elseif snapshot.state == "paused" and snapshot.reason == "resources" and previousReason ~= "resources" then
 		ui.toast(snapshot.message or "Out of materials — build paused.", "error")
 	end
-	refreshPreview()
+	-- Progress ticks arrive ~10x/second; rebuilding the preview each time would keep
+	-- restarting its pulse animation, so only refresh it when the state actually changed.
+	if snapshot.state ~= previous or snapshot.reason ~= previousReason then
+		refreshPreview()
+	end
 	render()
 end
 
