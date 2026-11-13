@@ -1,90 +1,76 @@
 # ABOVE[RUINS] | Auto Builder — MacSploit script
 
 One file: **`AutoBuilder_MacSploit.lua`**. Paste it into MacSploit while you're in the game and Execute.
-No installation, nothing in any Roblox service, no Studio. The status line shows the version (`v3.1 custom-hotbar`)
-so you can tell you're running the latest file.
+The status line shows the version (`v4 exact-cells + range`) so you can tell you're running the latest file.
 
-> **Status: not yet run in MacSploit or in ABOVE[RUINS].** I can't run either here and I haven't seen the game's
-> hotbar GUI or building code. The hotbar detection is heuristic (see below). If something fails the status line says
-> *which part* failed, and **clicking the status line copies the debug log** (it includes a dump of every hotbar slot it
-> saw), which is what I need to fix it.
+> **Status: not yet run in MacSploit or in ABOVE[RUINS] by me.** I can't run either here. The hotbar and placement
+> logic is built from how your game looks in screenshots; if something fails, the status line names the failing part
+> and **clicking it copies the debug log**.
 >
-> Running scripts through an executor is against Roblox's Terms of Use and can get an account banned; automated clicking
-> may also break the game's own rules.
+> Running scripts through an executor is against Roblox's Terms of Use and can get an account banned; automated
+> clicking and walking may also break the game's own rules.
 
-## The flow
+## The flow (menu unchanged)
 
-**SELECT AREA → select your block in the hotbar → AUTO BUILD**
+**SELECT AREA → select your block in the hotbar → AUTO BUILD → STOP**
 
-| Menu | What it does |
-|---|---|
-| **SELECT AREA** | click corner A, then the opposite corner B — the orange outline is exactly what will be filled |
-| **BLOCK: GRASS BLOCK  #4 detected** | the item you have selected. Grey word = *detected* only; it turns green **verified** only after a real block has been seen appearing in the world |
-| **NEEDED: 10 \| OWNED: 25** | empty cells left in the area; how many of that block you have (read from the hotbar's "x25") |
-| **AUTO BUILD** | always clickable once an area is selected. Places blocks one at a time; button shows real progress (`BUILDING 3/10`) |
-| **STOP** | stops at once |
+Rows are filled **left to right, one row after another, bottom layer first**. It builds slowly on purpose
+(accuracy over speed). While building it takes over the camera (looking straight down at each cell) and may walk your
+character to a safe spot; both are given back when it finishes or you press STOP.
 
-Select the block **after** choosing the area (so the game's own click handling can't place blocks at the corners you click).
-RightShift hides/shows the menu. Keep the whole area on screen, stay in placement range, don't touch the mouse while it builds.
+## What was going wrong, and which side it came from
 
-## How it finds your block (custom hotbar)
+**Client-side (my script's aiming/verification) — fixed in v4:**
 
-ABOVE[RUINS] draws its own hotbar, so there is no Roblox `Tool` to look at. The script reads the hotbar GUI instead:
+| Problem | Effect | Fix |
+|---|---|---|
+| The game's translucent green **placement preview** was counted as a real block | empty cells looked filled (skipped → gaps) and a preview could be counted as a placed block | only **opaque** parts count as blocks, everywhere |
+| The grid origin was **shifted after any nearby block-sized part** | target cells drifted mid-build → "strange positions" | the grid is aligned **once** from the real blocks around the area (and by the first block), then **never moved** |
+| Cells in a 1-block **trench** aren't visible from an ordinary camera angle | whole strips were never aimed at | camera looks **straight down** at each cell |
+| Snake row order, loose "a block appeared nearby" check | hard to reason about, wrong blocks accepted | fixed row order; a block must be **new, opaque, and exactly in the target cell** |
+| No protection against repeats | a cell could be clicked again | per-job registry; a filled cell is never clicked; hard cap `placed ≤ blocks counted at start`; counters reset every job |
 
-1. finds the slots — containers that each show a number 1–9 (it needs 3+ in a row),
-2. reads each slot's item name and count (`x25`, `25x`, `×25`, or a bare `25`),
-3. picks the **selected** slot: the one the game highlights (yellow outline / background / frame); if no highlight is
-   recognisable it takes the only slot that is styled differently from the rest; as a last resort it looks for a player
-   attribute/value such as `EquippedItem` / `SelectedSlot`,
-4. reads your block count live from that slot (and re-finds it if the game redraws the hotbar).
+**The game's own rules (the script cannot change these, only respect them):**
 
-A standard Tool in your hand is used too, if there is one. If the hotbar can't be read at all, AUTO BUILD still runs: type how
-many you have into **OWNED** and it proceeds in cautious mode (first click verified, stops immediately if a block gets
-removed instead of placed).
+- **Placement distance.** The game only places within some range of your character. I don't know the number, so the
+  script starts from a guess (20 studs, `CONFIG.PLACE_RANGE`), **never clicks beyond it**, and shortens it if the game
+  refuses a placement from far away.
+- Land ownership, placement cooldown, and which surfaces you may build on — the server decides; refusals show up as
+  `[PLACEMENT]`.
 
-## Placement: what "equipped" vs "verified" means
+## Range: what it does instead of standing still
 
-Detecting an item only means *I read the hotbar*. It is **not** proof that placing works. After each click the script
-waits to **see a new block appear in the right cell**; only then does it count the block and mark the item *verified*.
-Nothing is counted from estimates.
+Before every cell it checks your distance. If the cell is too far it **walks to a safe spot** within range of that cell
+and the next few (level solid ground only — pits, edges and walls are rejected; it uses the path finder, else a straight
+line only if the whole line is solid and level), then continues. It never stands inside the area being built. If there is
+no safe spot, the status says **`[RANGE] OUT OF RANGE: N blocks can't be reached`** and it stops — it does not try anyway.
+(Turn walking off with `CONFIG.AUTO_WALK = false`; then it reports OUT OF RANGE instead of moving.)
 
-## If it doesn't work: the status line names the part that failed
+## How placement is verified (every block)
 
-| Tag | Meaning |
-|---|---|
-| `[ITEM]` | I couldn't identify the selected hotbar item, read its count, or it's not selected any more |
-| `[INPUT]` | the mouse cursor can't be controlled, or my click never reached Roblox / was swallowed by a GUI |
-| `[AIM]` | I can't find a visible place to click (area hidden, off screen, behind the menu or the game's buttons) |
-| `[PLACEMENT]` | my clicks reached the game on target but it didn't place a block (range, land ownership, cooldown, needs a different action) — or a block disappeared (the item breaks blocks), or one landed in the wrong cell |
-| `[DETECTION]` | a block was used up but I couldn't see it in the world (block size / grid mismatch) |
+1. aim: camera above the cell → cursor on a face next to it → **if the game's own preview is visible, it must point at
+   this cell, otherwise no click**,
+2. click, then watch **every new part that appears anywhere** for ~1.5 s,
+3. exactly **one** new opaque block-sized part must be in the target cell (first block of a job may adopt a small grid
+   offset; every later block must be within 0.2 of a cell of its exact position),
+4. a block anywhere else — including **outside the orange outline** — or two blocks from one click → **STOP** (`[PLACEMENT]`),
+5. only then is it counted. If your count dropped but no block was seen → `[DETECTION]` stop.
 
-How it tells them apart: before building it moves the cursor and confirms it followed (`[INPUT]`); on each click it checks whether
-Roblox's input system saw the click (`[INPUT]` if not) and whether a GUI consumed it; if the click arrived cleanly and no block
-appeared, that is the game/server refusing (`[PLACEMENT]`); if your block count dropped but no block was visible it's `[DETECTION]`.
+## Failure tags
 
-## What actually places the blocks — and what could prevent it
+`[ITEM]` couldn't identify/read the held item · `[INPUT]` mouse/click problem · `[AIM]` no visible place to click ·
+`[RANGE]` out of the placement range with no safe spot · `[PLACEMENT]` the game refused, or a block landed in the wrong
+place · `[DETECTION]` a block was used but not seen.
 
-It does **not** call any RemoteEvent/RemoteFunction, hook anything, or change your inventory. It aims at a face next to each
-empty cell, moves the mouse there, clicks, and lets the **game's own building code** decide — range, land ownership, cooldown
-and taking one block from your inventory all happen exactly as when you click yourself. Blocks are real server-side blocks.
+## Honest limits
 
-What can stop it (the script can't work around these, and says so):
-
-- **No mouse control.** It needs `VirtualInputManager` or the executor's `mousemoveabs`/`mouse1click`.
-- **The game doesn't use "hold block, click a face".** Hold-to-place, a build mode, placement relative to your character, or
-  anti-macro checks would make it refuse the clicks (`[PLACEMENT]`). Doing that for real would need the game's own documented
-  building interface, which I don't have and won't guess at.
-- **Hotbar detection is heuristic.** If your hotbar's highlight isn't recognisable, the log's slot dump shows what it saw —
-  send it to me.
-- Server-side limits (range, land ownership) apply; it can't place where you can't.
-- It can't walk for you. Areas are capped at 5,000 blocks (`CONFIG.MAX_CELLS`).
-
-## Safety
-
-It refuses a held item that looks like a tool (pickaxe, axe, sword …), and stops immediately if a block *disappears* after a
-click. STOP sends no further clicks.
+- It cannot know the game's exact placement range or its placement preview's implementation; both are inferred/learned.
+- Walking uses the normal character controls and the game's own movement limits.
+- If the game has anti-macro checks, hold-to-place or a build mode, it will refuse the clicks (`[PLACEMENT]`).
+- Still never calls remotes or touches your inventory. Areas are capped at 5,000 blocks (`CONFIG.MAX_CELLS`).
 
 ## For your own Studio game
 
-Real placement for a game you own belongs on the server (validate ownership, take one block per placement, place it). An earlier
-Studio version of this project did exactly that: git history, commit `731e306`, folder `roblox/src`.
+The Studio-side equivalent — server-checked range, ownership and inventory, plus moving the character to valid building
+positions — is **not** in this file. An earlier Studio version is in git history (commit `731e306`, `roblox/src`) and does
+not have movement yet; say the word and I'll add range checks + automatic movement there.
