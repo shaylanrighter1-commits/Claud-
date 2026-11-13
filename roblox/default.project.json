@@ -1,0 +1,27 @@
+{
+  "name": "AboveRuinsAutoBuilder",
+  "tree": {
+    "$className": "DataModel",
+    "ReplicatedStorage": {
+      "$className": "ReplicatedStorage",
+      "AutoBuilder": {
+        "$path": "src/ReplicatedStorage/AutoBuilder"
+      }
+    },
+    "ServerScriptService": {
+      "$className": "ServerScriptService",
+      "AutoBuilder": {
+        "$path": "src/ServerScriptService/AutoBuilder"
+      }
+    },
+    "StarterPlayer": {
+      "$className": "StarterPlayer",
+      "StarterPlayerScripts": {
+        "$className": "StarterPlayerScripts",
+        "AutoBuilderClient": {
+          "$path": "src/StarterPlayer/StarterPlayerScripts/AutoBuilderClient"
+        }
+      }
+    }
+  }
+}
