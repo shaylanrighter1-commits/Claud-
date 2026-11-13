@@ -42,126 +42,7 @@ local function key(x, y, z)
 	return Core.cellKey({ x = x, y = y, z = z })
 end
 
-local function newWorld()
-	return {
-		filled = {}, -- [cellKey] = true  (blocks that exist)
-		hidden = {}, -- cells the camera can't see: the builder finds no place to click
-		refuse = {}, -- cells the game refuses for some reason other than distance
-		wrongPlace = {}, -- cells where the click makes the block land somewhere else
-		owned = 1000,
-		range = 1e9, -- the game's real placement distance
-		char = { x = 0, y = 3, z = 0 },
-		island = nil, -- function(cell) -> bool : is there ground? (island edge)
-		attempts = {}, -- every click, in order
-		clicksOnFilled = 0, -- clicks on a cell that already had a block: must stay 0
-		placedCount = 0, -- blocks that really got placed
-		stopNow = false,
-		stopAfter = nil, -- press STOP while the click after this many placements is in flight
-		logs = {},
-		moves = 0, -- the builder has no way to move the character; this must stay 0
-	}
-end
-
-local function makeEnv(world)
-	local env = {}
-	env.stopped = function()
-		return world.stopNow
-	end
-	env.tick = function()
-		return world.stopNow
-	end
-	env.occupied = function(c)
-		return world.filled[Core.cellKey(c)] == true
-	end
-	env.distance = function(c)
-		return Core.dist3(world.char, center(c))
-	end
-	env.wait = function() end
-	env.progress = function() end
-	env.log = function(t)
-		world.logs[#world.logs + 1] = t
-	end
-	env.attempt = function(c, dist)
-		local k = Core.cellKey(c)
-		world.attempts[#world.attempts + 1] = { key = k, dist = dist }
-		if world.filled[k] then
-			world.clicksOnFilled = world.clicksOnFilled + 1
-		end
-		if world.owned <= 0 then
-			return "noblocks"
-		end
-		if world.hidden[k] then
-			return "noaim", "hidden from the camera"
-		end
-		if world.island and not world.island(c) then
-			return "noaim", "no ground there"
-		end
-		if world.refuse[k] then
-			return "failed"
-		end
-		if dist > world.range then
-			return "failed"
-		end
-		if world.wrongPlace[k] then
-			return "misplaced", "landed elsewhere"
-		end
-		if world.stopAfter ~= nil and world.placedCount >= world.stopAfter then
-			world.stopNow = true -- STOP is pressed while this click is in flight; the block still appears
-			world.stopAfter = nil
-		end
-		world.filled[k] = true
-		world.owned = world.owned - 1
-		world.placedCount = world.placedCount + 1
-		return "placed"
-	end
-	return env
-end
-
-local function newJob(mn, mx, rowAxis, desc)
-	return {
-		order = Core.buildOrder(mn, mx, rowAxis or "z", desc or false),
-		placed = 0, total = 0, placedSet = {}, reach = Core.newReach(),
-	}
-end
-
--- one run of AUTO BUILD (or RESUME) on an existing job
-local function runJob(world, job)
-	local env = makeEnv(world)
-	world.stopNow = false
-	if not Core.prepare(env, job) then
-		return "stopped"
-	end
-	return Core.run(env, job, { maxFails = 3 })
-end
-
-local function countFilled(world)
-	local n = 0
-	for _ in pairs(world.filled) do
-		n = n + 1
-	end
-	return n
-end
-local function attemptedTwice(world)
-	local seen = {}
-	for _, a in ipairs(world.attempts) do
-		if seen[a.key] and world.filled[a.key] then
-			return a.key
-		end
-		seen[a.key] = true
-	end
-	return nil
-end
--- invariants that must hold after EVERY run, whatever happened
-local function invariants(world, job, label)
-	truthy(job.placed <= job.total, label .. ": placed (" .. job.placed .. ") exceeded total (" .. job.total .. ")")
-	eq(world.clicksOnFilled, 0, label .. ": clicked a cell that already had a block")
-	eq(world.moves, 0, label .. ": the character was moved")
-	eq(job.placed, world.placedCount, label .. ": counted blocks != blocks really placed")
-	eq(attemptedTwice(world), nil, label .. ": a cell was attempted again after it was filled")
-end
-
-local A = { x = 0, y = 0, z = 0 }
-local B33 = { x = 2, y = 0, z = 2 } -- 3 x 1 x 3 = 9 cells
+local A, B33 = { x = 0, y = 0, z = 0 }, { x = 2, y = 0, z = 2 } -- 3 x 1 x 3 = 9 cells
 
 print("build order")
 test("rows are filled one after another, every row in the SAME direction", function()
@@ -292,278 +173,304 @@ test("blocks that disagree give low agreement", function()
 	truthy(frac < 0.5, "should not claim agreement")
 end)
 
-print("building: small areas")
-test("3x1x3, empty: every cell filled once, counts exact", function()
-	local w, job = newWorld(), newJob(A, B33)
-	eq(runJob(w, job), "done")
-	eq(job.placed, 9); eq(job.total, 9); eq(countFilled(w), 9); eq(#w.attempts, 9)
-	invariants(w, job, "empty")
+----------------------------------------------------------------------------------------------
+-- walk mode: a simulated player looks at cells (in any order, with repeats, even outside the area) and the
+-- decision logic decides what to click and what to count.
+----------------------------------------------------------------------------------------------
+local CFG = { retryDelay = 1.5, closerBy = 2, maxFails = 6, maxStrays = 5, maxMismatches = 12 }
+local function newSim(mn, mx)
+	return {
+		job = Core.newWalk(mn, mx), filled = {}, owned = 1000, range = 1e9, refuse = {}, strayTo = {}, mismatch = {},
+		char = { x = 0, y = 3, z = 0 }, now = 0, clicks = {}, clicksOnFilled = 0, clicksOutside = 0, placedCount = 0,
+		stopCode = nil,
+	}
+end
+local function simEnv(W)
+	return {
+		occupied = function(c) return W.filled[Core.cellKey(c)] ~= nil end,
+		tick = function() return false end,
+	}
+end
+local function plan(W)
+	local ok = Core.walkPlan(W.job, simEnv(W))
+	truthy(ok, "plan was stopped")
+end
+-- the player looks at `cell` for one moment; returns what happened
+local function look(W, cell, dt)
+	W.now = W.now + (dt or 0.2)
+	local job = W.job
+	if W.stopCode then return "stopped" end
+	local dist = Core.dist3(W.char, center(cell))
+	local ok = Core.walkAllow(job, cell, dist, W.now, CFG)
+	if not ok then return "not allowed" end
+	local k = Core.cellKey(cell)
+	if W.filled[k] then return "occupied" end -- the script looks at the world before clicking
+	-- ---- the click ----
+	W.clicks[#W.clicks + 1] = k
+	if W.filled[k] then W.clicksOnFilled = W.clicksOnFilled + 1 end
+	if not Core.inBounds(cell, job.mn, job.mx) then W.clicksOutside = W.clicksOutside + 1 end
+	local result, extra
+	if W.mismatch[k] then
+		result, extra = "mismatch", "preview elsewhere"
+	elseif W.owned <= 0 then
+		result = "noblocks"
+	elseif W.refuse[k] or dist > W.range then
+		result = "failed"
+	elseif W.strayTo[k] then
+		local n = W.strayTo[k]
+		W.filled[Core.cellKey(n)] = true
+		W.owned = W.owned - 1
+		result, extra = "stray", "landed next door"
+	else
+		W.filled[k] = true
+		W.owned = W.owned - 1
+		W.placedCount = W.placedCount + 1
+		result = "placed"
+	end
+	local action, code, info = Core.walkResult(job, cell, dist, W.now, result, extra, CFG)
+	if action == "stop" then W.stopCode = code; return "stop", code, info end
+	return result
+end
+local function invariants(W, label)
+	local job = W.job
+	truthy(job.placed <= job.total, label .. ": placed (" .. job.placed .. ") exceeded total (" .. job.total .. ")")
+	eq(W.clicksOnFilled, 0, label .. ": clicked a cell that already had a block")
+	eq(W.clicksOutside, 0, label .. ": clicked outside the area")
+	eq(job.placed, W.placedCount, label .. ": counted blocks != blocks really placed in the aimed cell")
+end
+-- every cell of the area, in a scrambled order (a player wandering about), with extras outside / above
+local function wander(mn, mx, rounds)
+	local list = {}
+	for y = mn.y - 1, mx.y + 1 do
+		for z = mn.z - 1, mx.z + 1 do
+			for x = mn.x - 1, mx.x + 1 do list[#list + 1] = { x = x, y = y, z = z } end
+		end
+	end
+	local out, seed = {}, 7
+	for _ = 1, rounds or 3 do
+		for i = #list, 2, -1 do
+			seed = (seed * 1103515245 + 12345) % 2147483648
+			local j = seed % i + 1
+			list[i], list[j] = list[j], list[i]
+		end
+		for _, c in ipairs(list) do out[#out + 1] = c end
+	end
+	return out
+end
+print("walk mode: planning")
+test("the plan counts only EMPTY cells of the flat area", function()
+	local W = newSim(A, B33)
+	W.filled["0,0,0"] = true; W.filled["1,0,1"] = true; W.filled["2,0,2"] = true
+	plan(W)
+	eq(W.job.total, 6); eq(W.job.placed, 0)
+end)
+test("planning can be interrupted by STOP", function()
+	local W = newSim(A, { x = 20, y = 0, z = 20 })
+	eq(Core.walkPlan(W.job, { occupied = function() return false end, tick = function(i) return i > 10 end }), false)
+end)
+
+print("walk mode: filling by looking around")
+test("a wandering player fills a 3x3 area: every cell once, nothing outside it, counts exact", function()
+	local W = newSim(A, B33)
+	plan(W)
+	for _, c in ipairs(wander(A, B33, 4)) do look(W, c) end
+	eq(W.job.placed, 9); eq(W.job.total, 9); eq(W.placedCount, 9); eq(#W.clicks, 9)
+	invariants(W, "wander")
 end)
 test("a single-cell area", function()
-	local w, job = newWorld(), newJob(A, A)
-	eq(runJob(w, job), "done")
-	eq(job.placed, 1); eq(job.total, 1)
-	invariants(w, job, "1 cell")
+	local W = newSim(A, A)
+	plan(W)
+	for _, c in ipairs(wander(A, A, 2)) do look(W, c) end
+	eq(W.job.placed, 1); eq(#W.clicks, 1); invariants(W, "single")
 end)
-test("placed in exactly the planned order", function()
-	local w, job = newWorld(), newJob(A, B33)
-	runJob(w, job)
-	local want = { "0,0,0", "1,0,0", "2,0,0", "0,0,1", "1,0,1", "2,0,1", "0,0,2", "1,0,2", "2,0,2" }
-	for i, k in ipairs(want) do
-		eq(w.attempts[i].key, k, "attempt " .. i)
-	end
+test("cells outside the area and in the layer above are never tried (no stacking)", function()
+	local W = newSim(A, B33)
+	plan(W)
+	for y = -1, 2 do for x = -3, 6 do for z = -3, 6 do look(W, { x = x, y = y, z = z }) end end end
+	eq(W.job.placed, 9)
+	for _, k in ipairs(W.clicks) do truthy(string.find(k, "^%d,0,%d$"), "clicked outside the flat area: " .. k) end
+	invariants(W, "outside")
 end)
-test("a 7x1x21 area (like the real one)", function()
-	local w, job = newWorld(), newJob(A, { x = 6, y = 0, z = 20 })
-	eq(runJob(w, job), "done")
-	eq(job.placed, 147); eq(job.total, 147)
-	invariants(w, job, "7x1x21")
+test("existing blocks are never clicked, and are not counted", function()
+	local W = newSim(A, B33)
+	W.filled["0,0,0"] = true; W.filled["2,0,1"] = true
+	plan(W)
+	for _, c in ipairs(wander(A, B33, 3)) do look(W, c) end
+	eq(W.job.placed, 7); eq(W.job.total, 7); eq(#W.clicks, 7); eq(W.placedCount, 7)
+	invariants(W, "existing")
 end)
-
-print("building: existing blocks")
-test("cells that already hold blocks are skipped and never clicked", function()
-	local w, job = newWorld(), newJob(A, B33)
-	for _, k in ipairs({ "0,0,0", "1,0,0", "2,0,1", "1,0,2" }) do w.filled[k] = true end
-	eq(runJob(w, job), "done")
-	eq(job.placed, 5); eq(job.total, 5); eq(countFilled(w), 9)
-	invariants(w, job, "existing")
+test("looking at the same cell again and again places one block only", function()
+	local W = newSim(A, B33)
+	plan(W)
+	for _ = 1, 50 do look(W, { x = 1, y = 0, z = 1 }, 0.05) end
+	eq(#W.clicks, 1); eq(W.job.placed, 1)
 end)
-test("a fully built area: nothing to do, nothing clicked", function()
-	local w, job = newWorld(), newJob(A, B33)
-	for i = 0, 2 do for j = 0, 2 do w.filled[key(i, 0, j)] = true end end
-	eq(runJob(w, job), "done")
-	eq(job.placed, 0); eq(job.total, 0); eq(#w.attempts, 0)
-end)
-test("somebody fills a cell while I'm building: it is skipped, total drops, nothing is double counted", function()
-	local w, job = newWorld(), newJob(A, B33)
-	local env = makeEnv(w)
-	local placedNow = 0
-	local baseAttempt = env.attempt
-	env.attempt = function(c, d)
-		local r, e = baseAttempt(c, d)
-		if r == "placed" then
-			placedNow = placedNow + 1
-			if placedNow == 2 then w.filled["2,0,2"] = true end -- another player builds there
-		end
-		return r, e
-	end
-	w.stopNow = false
-	truthy(Core.prepare(env, job))
-	eq(Core.run(env, job, { maxFails = 3 }), "done")
-	eq(job.placed, 8); eq(job.total, 8); eq(countFilled(w), 9)
-	eq(w.clicksOnFilled, 0)
+test("a full area: nothing to do", function()
+	local W = newSim(A, B33)
+	for x = 0, 2 do for z = 0, 2 do W.filled[x .. ",0," .. z] = true end end
+	plan(W)
+	eq(W.job.total, 0)
+	for _, c in ipairs(wander(A, B33, 2)) do look(W, c) end
+	eq(#W.clicks, 0)
 end)
 
-print("building: gaps (cells I can't see) and resuming")
-test("hidden cells stop the build with 'aim'; fixing the view and resuming finishes it, no repeats", function()
-	local w, job = newWorld(), newJob(A, B33)
-	w.hidden["1,0,1"] = true; w.hidden["1,0,2"] = true
-	local res, code, extra = runJob(w, job)
-	eq(res, "stop"); eq(code, "aim"); eq(extra.remaining, 2)
-	eq(job.placed, 7); eq(job.total, 9)
-	invariants(w, job, "gaps")
-	w.hidden = {} -- the user tilts the camera; presses AUTO BUILD again (resume)
-	w.attempts = {}
-	eq(runJob(w, job), "done")
-	eq(job.placed, 9); eq(job.total, 9); eq(#w.attempts, 2, "only the 2 missing cells are clicked")
-	invariants(w, job, "gaps resumed")
+print("walk mode: bookkeeping")
+test("a cell this job filled is never clicked again, even if the world is slow to show the block", function()
+	local W = newSim(A, B33)
+	plan(W)
+	look(W, { x = 1, y = 0, z = 1 })
+	eq(#W.clicks, 1)
+	W.filled["1,0,1"] = nil -- the world "forgets" the block for a moment
+	look(W, { x = 1, y = 0, z = 1 }, 5)
+	eq(#W.clicks, 1, "clicked a cell it had already filled")
 end)
-test("a whole row of gaps (the trench problem) is reported, not silently skipped", function()
-	local w, job = newWorld(), newJob(A, { x = 6, y = 0, z = 6 })
-	for x = 0, 6 do w.hidden[key(x, 0, 3)] = true end
-	local res, code, extra = runJob(w, job)
-	eq(res, "stop"); eq(code, "aim"); eq(extra.remaining, 7)
-	eq(job.placed, 42)
+test("a re-plan does not count the cells this job filled as empty again", function()
+	local W = newSim(A, B33)
+	plan(W)
+	for x = 0, 2 do look(W, { x = x, y = 0, z = 0 }) end
+	eq(W.job.placed, 3)
+	for x = 0, 2 do W.filled[x .. ",0,0"] = nil end -- slow to show
+	plan(W)
+	eq(W.job.total, 9, "3 placed + 6 empty")
 end)
-
-print("building: island edges (no character movement exists at all)")
-test("cells beyond the island edge are never filled and the character never moves", function()
-	local w, job = newWorld(), newJob(A, { x = 3, y = 0, z = 5 })
-	w.island = function(c) return c.z <= 3 end -- ground only up to z = 3
-	local res, code = runJob(w, job)
-	eq(res, "stop"); eq(code, "aim")
-	for x = 0, 3 do
-		truthy(w.filled[key(x, 0, 3)], "island cells should be filled")
-		truthy(not w.filled[key(x, 0, 4)], "off-island cell must stay empty")
-		truthy(not w.filled[key(x, 0, 5)], "off-island cell must stay empty")
-	end
-	eq(job.placed, 16)
-	invariants(w, job, "island")
-end)
-
-print("building: placement distance")
-test("a refusal far away is learned as the range: no more clicks that far, reported OUT OF RANGE", function()
-	local w, job = newWorld(), newJob(A, { x = 0, y = 0, z = 14 }) -- a line of 15 cells going away from the player
-	w.range = 22
-	local res, code, extra = runJob(w, job)
-	eq(res, "stop"); eq(code, "range")
-	local beyond = 0
-	for _, a in ipairs(w.attempts) do
-		if a.dist > 22 then beyond = beyond + 1 end
-	end
-	truthy(beyond <= 1, "clicked beyond the range " .. beyond .. " times (should be at most the single probe)")
-	truthy(job.placed >= 5 and job.placed < 15, "placed " .. job.placed)
-	truthy(job.reach.failMin ~= nil, "range should have been learned")
-	invariants(w, job, "range")
-	-- the user walks closer and resumes
-	w.char = { x = 0, y = 3, z = 40 }
-	w.attempts = {}
-	eq(runJob(w, job), "done")
-	eq(job.placed, 15); eq(job.total, 15)
-	invariants(w, job, "range resumed")
-end)
-test("cells the game accepts at long range are NOT held back by a guess", function()
-	local w, job = newWorld(), newJob(A, { x = 0, y = 0, z = 14 })
-	w.range = 1e9
-	eq(runJob(w, job), "done")
-	eq(job.placed, 15)
-end)
-test("a refusal NEAR the player is a placement problem, not 'range': 3 in a row stop the build", function()
-	local w, job = newWorld(), newJob(A, B33)
-	w.refuse["0,0,0"] = true; w.refuse["1,0,0"] = true; w.refuse["2,0,0"] = true
-	local res, code = runJob(w, job)
-	eq(res, "stop"); eq(code, "failed")
-	eq(#w.attempts, 3, "stops after the third refusal")
-	eq(job.placed, 0)
-end)
-
-print("building: stopping, interruption and resuming")
-test("STOP during a click: the block that really appeared is counted, nothing after it", function()
-	local w, job = newWorld(), newJob(A, B33)
-	w.stopAfter = 4
-	eq(runJob(w, job), "stopped")
-	eq(w.placedCount, 5); eq(job.placed, 5)
-	invariants(w, job, "interrupted")
-	w.attempts = {}
-	eq(runJob(w, job), "done") -- resume
-	eq(job.placed, 9); eq(job.total, 9); eq(#w.attempts, 4); eq(countFilled(w), 9)
-	invariants(w, job, "resumed")
-end)
-test("STOP before anything: nothing placed, nothing counted", function()
-	local w, job = newWorld(), newJob(A, B33)
-	w.stopAfter = 0
-	eq(runJob(w, job), "stopped")
-	eq(job.placed, w.placedCount)
-	invariants(w, job, "stop-first")
-end)
-test("interrupted over and over (every 2 blocks), each resume skips what exists - still exact", function()
-	local w, job = newWorld(), newJob(A, { x = 4, y = 0, z = 4 }) -- 25 cells
-	local rounds = 0
-	while true do
-		w.stopAfter = 1
-		local res = runJob(w, job)
-		rounds = rounds + 1
-		invariants(w, job, "round " .. rounds)
-		if res == "done" or rounds > 40 then break end
-		w.stopAfter = nil
-		w.stopNow = false
-	end
-	eq(job.placed, 25); eq(job.total, 25); eq(countFilled(w), 25)
-end)
-
-print("building: wrong placement and running out")
-test("a block that lands in the wrong place stops the build at once", function()
-	local w, job = newWorld(), newJob(A, B33)
-	w.wrongPlace["2,0,0"] = true -- the 3rd cell
-	local res, code, extra = runJob(w, job)
-	eq(res, "stop"); eq(code, "misplaced")
-	eq(#w.attempts, 3, "nothing is attempted after the wrong placement")
-	eq(job.placed, 2)
-end)
-test("out of blocks stops; resuming with more blocks finishes, exact totals", function()
-	local w, job = newWorld(), newJob(A, B33)
-	w.owned = 4
-	local res, code = runJob(w, job)
-	eq(res, "stop"); eq(code, "noblocks")
-	eq(job.placed, 4); eq(job.total, 9)
-	invariants(w, job, "no blocks")
-	w.owned = 100
-	w.attempts = {}
-	eq(runJob(w, job), "done")
-	eq(job.placed, 9); eq(#w.attempts, 5)
-	invariants(w, job, "no blocks resumed")
-end)
-
-print("counters and duplicates (even if the placement layer misbehaves)")
-test("a placement layer that always claims success: each cell is attempted once, placed never exceeds total", function()
-	local w, job = newWorld(), newJob(A, B33)
-	local env = makeEnv(w)
-	local calls = {}
-	env.attempt = function(c)
-		local k = Core.cellKey(c)
-		calls[k] = (calls[k] or 0) + 1
-		return "placed" -- lies: the world never gets the block
-	end
-	w.stopNow = false
-	truthy(Core.prepare(env, job))
-	eq(Core.run(env, job, { maxFails = 3 }), "done")
-	eq(job.placed, 9); eq(job.total, 9)
-	for k, n in pairs(calls) do eq(n, 1, "cell " .. k .. " attempted " .. n .. " times") end
-end)
-test("every new job starts from zero", function()
-	local w1, j1 = newWorld(), newJob(A, B33)
-	runJob(w1, j1)
-	local w2, j2 = newWorld(), newJob(A, { x = 1, y = 0, z = 1 })
-	runJob(w2, j2)
-	eq(j2.placed, 4); eq(j2.total, 4)
-end)
-
-print("planning and bookkeeping details")
-test("the plan counts only EMPTY cells before any click (existing blocks are not NEEDED)", function()
-	local w, job = newWorld(), newJob(A, B33)
-	w.filled["0,0,0"] = true; w.filled["1,0,1"] = true; w.filled["2,0,2"] = true
-	truthy(Core.prepare(makeEnv(w), job))
-	eq(#job.todo, 6, "cells to fill"); eq(job.total, 6, "total before the first click"); eq(job.placed, 0)
-	for _, c in ipairs(job.todo) do
-		truthy(not w.filled[Core.cellKey(c)], "an occupied cell was planned")
-	end
-end)
-test("a cell this job filled is never planned or clicked again, even if the world is slow to show the block", function()
-	local w, job = newWorld(), newJob(A, B33)
-	w.stopAfter = 3
-	runJob(w, job) -- STOP after 4 placed
-	local placedKeys = {}
-	for k in pairs(job.placedSet) do placedKeys[k] = true; w.filled[k] = nil end -- the world forgets them for a moment
-	w.attempts = {}
-	w.stopNow = false
-	w.stopAfter = nil
-	truthy(Core.prepare(makeEnv(w), job))
-	for _, c in ipairs(job.todo) do
-		truthy(not placedKeys[Core.cellKey(c)], "a placed cell was planned again")
-	end
-	eq(job.total, job.placed + #job.todo, "total = placed + still to place")
-	eq(runJob(w, job), "done")
-	for _, a in ipairs(w.attempts) do
-		truthy(not placedKeys[a.key], "clicked an already placed cell again: " .. a.key)
-	end
+test("when the job is complete nothing more is tried, whatever the player looks at", function()
+	local W = newSim(A, B33)
+	plan(W)
+	W.job.total = 1
+	look(W, { x = 0, y = 0, z = 0 })
+	eq(W.job.placed, 1)
+	look(W, { x = 1, y = 0, z = 0 }, 5)
+	eq(#W.clicks, 1)
 end)
 test("consensus picks the majority lattice whichever way the buckets are iterated", function()
-	-- majority at a high bucket, minorities at low ones ... and the other way round
 	local a, b = {}, {}
 	for i = 1, 6 do a[#a + 1] = 3.0; b[#b + 1] = 0.2 end
 	a[#a + 1] = 0.2; a[#a + 1] = 0.2; a[#a + 1] = 0.8
 	b[#b + 1] = 3.0; b[#b + 1] = 3.0; b[#b + 1] = 2.4
-	local va = Core.consensus(a, 4)
-	local vb = Core.consensus(b, 4)
-	near(va, 3.0, 0.05, "majority at 3.0"); near(vb, 0.2, 0.05, "majority at 0.2")
+	near((Core.consensus(a, 4)), 3.0, 0.05, "majority at 3.0")
+	near((Core.consensus(b, 4)), 0.2, 0.05, "majority at 0.2")
 end)
 
-print("defence in depth: the run loop protects itself even from a bad plan")
-test("a cell listed twice in the plan is clicked once and counted once", function()
-	local w, job = newWorld(), newJob(A, B33)
-	local c1, c2 = { x = 0, y = 0, z = 0 }, { x = 1, y = 0, z = 0 }
-	job.todo = { c1, c1, c2 }
-	job.total = 2
-	eq(Core.run(makeEnv(w), job, { maxFails = 3 }), "done")
-	eq(job.placed, 2); eq(job.total, 2); eq(w.placedCount, 2); eq(#w.attempts, 2)
-	invariants(w, job, "duplicate in plan")
+print("walk mode: placement distance")
+test("a refusal far away is learned: far cells are left alone (no click spam), nothing is claimed placed", function()
+	local W = newSim(A, { x = 6, y = 0, z = 6 }) -- 49 cells; the player stands at the origin corner
+	W.range = 18
+	plan(W)
+	for _, c in ipairs(wander(A, { x = 6, y = 0, z = 6 }, 6)) do look(W, c, 2) end
+	truthy(W.job.placed > 0 and W.job.placed < 49, "some cells in reach, some not: " .. W.job.placed)
+	truthy(W.job.reach.failMin ~= nil, "the range was not learned")
+	eq(W.stopCode, nil, "a range refusal must not stop the build")
+	-- far cells were tried a few times at most, not on every look
+	truthy(#W.clicks <= W.job.placed + 12, "too many clicks wasted on far cells: " .. #W.clicks)
+	invariants(W, "range")
+	W.char = { x = 14, y = 3, z = 14 } -- the player walks to the middle
+	for _, c in ipairs(wander(A, { x = 6, y = 0, z = 6 }, 4)) do look(W, c, 2) end
+	eq(W.job.placed, 49); invariants(W, "range+walk")
 end)
-test("never places more blocks than the plan's total", function()
-	local w, job = newWorld(), newJob(A, B33)
-	job.todo = { { x = 0, y = 0, z = 0 }, { x = 1, y = 0, z = 0 }, { x = 2, y = 0, z = 0 } }
-	job.total = 2
-	eq(Core.run(makeEnv(w), job, { maxFails = 3 }), "done")
-	eq(job.placed, 2); eq(w.placedCount, 2, "blocks really placed")
+test("cells the game accepts at long range are not held back by a guess", function()
+	local W = newSim(A, { x = 6, y = 0, z = 6 })
+	plan(W)
+	for _, c in ipairs(wander(A, { x = 6, y = 0, z = 6 }, 3)) do look(W, c) end
+	eq(W.job.placed, 49)
+end)
+test("a refused cell is not retried straight away, but is once the player is closer", function()
+	local W = newSim(A, B33)
+	W.refuse["1,0,1"] = true
+	plan(W)
+	look(W, { x = 1, y = 0, z = 1 }, 0.1)
+	eq(#W.clicks, 1)
+	look(W, { x = 1, y = 0, z = 1 }, 0.1) -- 0.1 s later: too soon
+	eq(#W.clicks, 1)
+	look(W, { x = 1, y = 0, z = 1 }, 2) -- 2 s later: allowed
+	eq(#W.clicks, 2)
+	W.char = { x = 40, y = 3, z = 40 }
+	W.char = { x = 6, y = 3, z = 6 }
+	W.refuse = {}
+	look(W, { x = 1, y = 0, z = 1 }, 0.1) -- closer by more than 2 studs: allowed even though it was just tried
+	truthy(W.job.placedSet["1,0,1"], "should have been placed")
+end)
+test("several clicks in a row that reach the game and place nothing (near the player) stop the build", function()
+	local W = newSim(A, { x = 5, y = 0, z = 0 })
+	W.char = { x = 12, y = 3, z = 2 } -- everything within 14 studs: these are not "too far" refusals
+	for x = 0, 5 do W.refuse[x .. ",0,0"] = true end
+	plan(W)
+	for _, c in ipairs(wander(A, { x = 5, y = 0, z = 0 }, 3)) do look(W, c, 2) end
+	eq(W.stopCode, "failed"); eq(#W.clicks, 6, "it stops on the 6th failure, not later")
+end)
+
+print("walk mode: strays, mismatches, stopping")
+test("a block landing in another cell INSIDE the area is not counted, tolerated up to the limit, then stops", function()
+	local W = newSim(A, { x = 9, y = 0, z = 1 })
+	W.char = { x = 20, y = 3, z = 4 }
+	plan(W)
+	for x = 0, 9 do W.strayTo[x .. ",0,0"] = { x = x, y = 0, z = 1 } end -- each click on row 0 lands in row 1
+	for x = 0, 9 do look(W, { x = x, y = 0, z = 0 }, 2) end
+	eq(W.stopCode, "misplaced"); eq(#W.clicks, 6, "5 tolerated strays, the 6th stops")
+	eq(W.job.placed, 0, "a stray is never counted as placed")
+end)
+test("the game's preview pointing at another cell: no click; too many in a row stops with 'mismatch'", function()
+	local W = newSim(A, { x = 20, y = 0, z = 0 })
+	for x = 0, 20 do W.mismatch[x .. ",0,0"] = true end
+	plan(W)
+	for x = 0, 20 do look(W, { x = x, y = 0, z = 0 }, 2) end
+	eq(W.stopCode, "mismatch"); eq(W.placedCount, 0)
+end)
+test("a good placement resets the failure counters", function()
+	local W = newSim(A, { x = 9, y = 0, z = 0 })
+	plan(W)
+	W.refuse["0,0,0"] = true; W.refuse["1,0,0"] = true; W.refuse["2,0,0"] = true
+	for x = 0, 2 do look(W, { x = x, y = 0, z = 0 }, 2) end
+	eq(W.job.fails, 3)
+	look(W, { x = 5, y = 0, z = 0 }, 2)
+	eq(W.job.fails, 0)
+end)
+test("out of blocks stops; the same job resumes with the exact counts", function()
+	local W = newSim(A, B33)
+	W.owned = 4
+	plan(W)
+	for _, c in ipairs(wander(A, B33, 3)) do look(W, c) end
+	eq(W.stopCode, "noblocks"); eq(W.job.placed, 4)
+	W.owned = 100; W.stopCode = nil
+	plan(W) -- resume: a fresh look at the world
+	eq(W.job.total, 9)
+	for _, c in ipairs(wander(A, B33, 3)) do look(W, c) end
+	eq(W.job.placed, 9); eq(W.placedCount, 9); invariants(W, "blocks")
+end)
+test("an unknown result stops the build and is reported as it is", function()
+	local W = newSim(A, B33)
+	plan(W)
+	local action, code = Core.walkResult(W.job, A, 5, 1, "broke", "x", CFG)
+	eq(action, "stop"); eq(code, "broke")
+end)
+test("interrupted again and again (re-planning each time): always exact", function()
+	local W = newSim(A, { x = 4, y = 0, z = 4 })
+	local n = 0
+	for round = 1, 60 do
+		plan(W)
+		W.stopCode = nil
+		for _, c in ipairs(wander(A, { x = 4, y = 0, z = 4 }, 1)) do
+			look(W, c, 2); n = n + 1
+			if W.placedCount % 2 == 1 and round % 2 == 0 then break end
+		end
+		invariants(W, "round " .. round)
+		if W.job.placed >= W.job.total then break end
+	end
+	eq(W.job.placed, 25); eq(W.job.total, 25)
+end)
+test("a verified placement is always counted, even if the plan thought the cell was filled", function()
+	local W = newSim(A, B33)
+	plan(W)
+	W.job.total = 0 -- stale plan
+	local act = Core.walkResult(W.job, A, 5, 1, "placed", nil, CFG)
+	eq(act, "continue"); eq(W.job.placed, 1); eq(W.job.total, 1, "total follows the verified count"); truthy(W.job.placed <= W.job.total)
+	local act2 = Core.walkResult(W.job, A, 5, 2, "placed", nil, CFG) -- the same cell again: counted once
+	eq(W.job.placed, 1)
+end)
+test("a new job starts at zero", function()
+	local a, b = newSim(A, B33), newSim(A, { x = 1, y = 0, z = 1 })
+	plan(a); plan(b)
+	for _, c in ipairs(wander(A, B33, 3)) do look(a, c) end
+	eq(b.job.placed, 0); eq(b.job.total, 4)
 end)
 
 print(string.format("\n%d passed, %d failed", passed, failed))

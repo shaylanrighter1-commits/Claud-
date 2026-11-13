@@ -1,45 +1,45 @@
-# ABOVE[RUINS] | WORLDEDIT (MacSploit)
+# ABOVE[RUINS] | AUTO BUILDER (MacSploit)
 
 One file: `AutoBuilder_MacSploit.lua`. Paste the whole file into MacSploit and execute.
 
 ```
-ABOVE[RUINS] | WORLDEDIT
+ABOVE[RUINS] | AUTO BUILDER
 [ SELECT AREA ]
 BLOCK: GRASS BLOCK
 NEEDED: 100 | OWNED: 150
-[ FILL ]                 ->  [ STOP 45/100 ] while it builds  ->  [ RESUME 45/100 ] after a stop
+[ AUTO PLACE ]           ->  [ STOP 45/100 ] while it runs  ->  [ RESUME 45/100 ] after a stop
 [ CLEAR SELECTION ]
 STATUS: READY
 ```
 
+## How it works: you walk, it places
+1. `[ SELECT AREA ]`, click corner A, then corner B. The area is **one flat layer** (point B takes point A's height,
+   so there is no stacking). The orange outline shows it; the status line says how many spots are empty and how many
+   are already filled.
+2. Select your block in the hotbar (the menu shows `BLOCK:` and `NEEDED | OWNED`).
+3. `[ AUTO PLACE ]`. Now **you** walk around the area (first person is fine) and look at the floor. Whenever your
+   crosshair points at a spot of the area that has no block yet, one block is placed there, exactly as if you had
+   clicked. Look at every spot (the status line and the orange outline show what is left); it says Done when the whole
+   area is filled.
+4. The same button is `[ STOP ]` while it runs and `[ RESUME ]` after a stop. `[ CLEAR SELECTION ]` forgets the area.
+5. RightShift hides / shows the menu. Click the STATUS line to copy the debug log.
+
+What it does with each look (about every tenth of a second): works out which grid cell the game would put a block into
+at the crosshair; if that is an empty spot of the area, checks again 50 ms later that you are still pointing at it
+(so nothing is clicked while you turn), compares it with the game's own placement preview when that can be read, and
+only then clicks. It **never moves your mouse, camera or character**; it only clicks where you are already pointing.
+
 ## What can and cannot work through MacSploit
-| WorldEdit feature | Through MacSploit |
+| Wish | Through MacSploit |
 |---|---|
-| Two-point selection snapped to the block grid, orange outline | **Works** (unchanged) |
-| Show what will be filled | **Works**: outline + `NEEDED` (empty cells) + a status line "N to fill, M already filled" |
-| Skip occupied cells, never place outside the outline, never duplicate, count only confirmed blocks | **Works** (tested in simulation) |
+| Two-point selection snapped to the block grid, orange outline, flat area | **Works** |
+| Skip occupied spots, never place outside the outline, never duplicate, count only confirmed blocks | **Works** (tested in simulation) |
+| Place blocks as you walk and look around | **Works** (this version) - one click per block, with the game's own checks |
 | Use blocks from your inventory | **Works**, because the game's own placement uses them; the script only clicks |
-| All blocks appear instantly (`//set`) | **Not possible.** A client script can only do what you can do: one click = one block. There is no bulk call it is allowed to use. The button is called FILL, not INSTANT FILL, on purpose |
-| Fill from 100 blocks away | **Not possible.** The game's server checks the distance on every placement. The script reports `[RANGE]` and never claims otherwise |
-| Move the character / camera | It never does |
+| All blocks appear instantly, or filling from 100 blocks away | **Not possible.** The game's server checks distance and inventory on every placement. Spots out of reach are simply skipped until you are close enough |
 
-Instant or remote filling needs a bulk-build feature on the game's **server**, offered by the game (for example by its
-developers). This script does not invent or call private remotes. If the game has its own area / bulk tool in its
-UI, tell me how it works and the script can drive it through the normal UI.
-
-## How to use
-1. `[ SELECT AREA ]`, then click corner A and corner B. The orange outline is exactly what gets filled.
-2. Select your block in the hotbar. The menu shows `BLOCK:` and `NEEDED | OWNED`.
-3. `[ FILL ]`. The same button says `[ STOP ]` while it builds. If it stops because of a problem, fix it and press
-   the button again: it says `[ RESUME x/y ]` and carries on with the same count (nothing is placed twice).
-   `[ CLEAR SELECTION ]` forgets the area (and stops a running build).
-4. RightShift hides / shows the menu. Click the STATUS line to copy the debug log.
-5. **You may move the mouse while it builds.** It takes the cursor back for every click (so the cursor jumps), and
-   keeps going. It builds fastest if you leave the mouse alone. It only pauses if the mouse is in the way of one
-   click for 20 seconds in a row, or stays locked (first person / shift-lock); then you press `[ RESUME ]`.
-   Turning the camera with the right mouse button is waited out. The game aims with the cursor, so if you move the
-   mouse at the exact moment of a click, a block can land in a neighbouring cell. If that cell is inside the orange
-   area it is tolerated (3 times per build, that cell is retried); outside the area it always stops the build.
+Instant or remote filling needs a bulk-build feature on the game's **server** (offered by the game's developers).
+This script does not invent or call private remotes.
 
 ## What it never does
 * Never walks, jumps or teleports your character. Never touches your camera.
@@ -68,20 +68,21 @@ Failure tags: `[ITEM] [INPUT] [AIM] [RANGE] [PLACEMENT] [DETECTION]`.
 
 ## What was tested, and what was NOT
 **Tested outside Roblox (simulated, Lua 5.5 via `lupa`):**
-* `python3 roblox/tests/run_core_tests.py`: 42 tests of the decision logic embedded in the script (build order,
-  checking a placed block's cell, counters, duplicate protection, range learning, stop / resume).
-* `python3 roblox/tests/run_glue_tests.py`: 34 tests that run the script's real `placeCell` / `runJob` / `autoBuild`
-  / `stop` against a simulated world: small areas, existing blocks, hidden cells, island edges, out-of-range,
-  interrupted builds, wrong placement, out of blocks, deselected block, grid offset, and a moving mouse (cursor knocked
-  off the target, mouse locked for a camera turn, a block landing next door because the mouse moved).
+* `python3 roblox/tests/run_core_tests.py`: 41 tests of the decision logic embedded in the script (build order,
+  checking a placed block's cell, which spots may be tried, counters, duplicate protection, range learning, strays).
+* `python3 roblox/tests/run_glue_tests.py`: 31 tests that run the script's real `walkPlace` / `runWalk` /
+  `autoBuild` / `stop` against a simulated player and world: walking around a floor, existing blocks, nothing outside
+  the area or on the layer above, only clicking when you hold still, out-of-range spots, stop / resume / clear,
+  out of blocks, a deselected block, wrong placement (inside / outside the area), the flat selection, grid offset.
 * Mutation checks: deliberately breaking the logic makes these tests fail (a few redundant safety checks are
   intentionally duplicated and not individually detectable).
 * Static checks: block balance, no undefined names, no remote / hook references.
 
 **NOT tested: the real game.** The simulated world is my model of Roblox. Nothing here has run inside Roblox or
-ABOVE[RUINS]. Raycasts, the executor's mouse events, the custom hotbar reading, and whether the game accepts a click
-on a block face as a placement are untested. Expect to need one or two rounds of fixes after the first real run.
+ABOVE[RUINS]. The raycast from your crosshair (especially in first person, where the mouse is locked to the screen centre),
+the executor's click events, the custom hotbar reading, and whether the game accepts a click on a block face as a
+placement are untested. Expect to need one or two rounds of fixes after the first real run.
 If something fails, click the STATUS line, which copies the log, and send it to me.
 
-Known limits: glass-like (translucent) blocks are not recognised as blocks; the aim needs a visible face next to
-each cell; running scripts through an executor is against Roblox's Terms of Use and can get an account banned.
+Known limits: glass-like (translucent) blocks are not recognised as blocks; you have to look at each spot yourself;
+running scripts through an executor is against Roblox's Terms of Use and can get an account banned.
