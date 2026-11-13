@@ -721,7 +721,15 @@ local function toolCount(tool)
 end
 local function scanTools(name)
 	local want = norm(name)
-	for _, container in ipairs({ LocalPlayer:FindFirstChild("Backpack"), LocalPlayer.Character }) do
+	local containers = {} -- (built by appending: a nil Backpack mid-respawn must not hide the Character)
+	local backpack = LocalPlayer:FindFirstChild("Backpack")
+	if backpack then
+		containers[#containers + 1] = backpack
+	end
+	if LocalPlayer.Character then
+		containers[#containers + 1] = LocalPlayer.Character
+	end
+	for _, container in ipairs(containers) do
 		if container then
 			for _, tool in ipairs(container:GetChildren()) do
 				if tool:IsA("Tool") then
@@ -820,7 +828,7 @@ end
 local Scan = { order = nil, n = 0, filled = {}, filledCount = 0, i = 1, done = false, passes = 0, tooLarge = false }
 local overlap = OverlapParams.new()
 overlap.FilterType = Enum.RaycastFilterType.Exclude
-overlap.MaxParts = 10
+overlap.MaxParts = 50 -- a cell crowded with small decorations must not hide the real block
 
 function Scan.reset(plan)
 	Scan.filled, Scan.filledCount, Scan.i, Scan.done, Scan.passes = {}, 0, 1, false, 0
@@ -873,6 +881,7 @@ function Scan.step(count)
 		if Scan.i > o.n then
 			Scan.done = true
 			Scan.passes += 1
+			Scan.lastDone = os.clock()
 			if S.track == "running" then
 				Scan.i = 1 -- keep cycling so progress follows what you place
 			else
@@ -1208,10 +1217,10 @@ local function trackStart()
 		toast("That area is too large to track.", "error")
 		return
 	end
-	if not Scan.done then
-		-- finish the first scan quickly so the baseline is meaningful
-		pcall(Scan.step, Scan.n)
-	end
+	-- Always take a fresh, complete reading right now, so blocks you placed since the last scan
+	-- (or before pressing START again after Pause/Cancel) don't count as build progress.
+	Scan.i = 1
+	pcall(Scan.step, Scan.n)
 	if Scan.filledCount >= Scan.n then
 		toast("Every block in this area already exists.", "error")
 		return
@@ -1299,7 +1308,7 @@ end
 -- numbers shown by the calculator
 derive = function()
 	local d = { total = S.plan and S.plan.count or 0 }
-	d.scanReady = Scan.order ~= nil and S.detect and (Scan.done or S.track == "running" or S.track == "paused")
+	d.scanReady = Scan.order ~= nil and S.detect and (Scan.passes > 0 or S.track == "running" or S.track == "paused")
 	d.filled = d.scanReady and Scan.filledCount or 0
 	d.required = math.max(0, d.total - d.filled)
 	local avail, kind = Inv.get(S.opts.material)
@@ -1753,7 +1762,8 @@ local function buildGui()
 	end)
 	if CONFIG.TOGGLE_KEY then
 		keep(UIS.InputBegan:Connect(function(input, processed)
-			if not processed and input.KeyCode == CONFIG.TOGGLE_KEY then
+			-- (not `processed`: some games sink Shift for shift-lock; just don't fire while typing)
+			if input.KeyCode == CONFIG.TOGGLE_KEY and UIS:GetFocusedTextBox() == nil then
 				setOpen(not state.open)
 			end
 		end))
@@ -1763,6 +1773,9 @@ local function buildGui()
 	task.spawn(function()
 		while ARB.alive do
 			task.wait(2)
+			if not ARB.alive then
+				break -- this copy was replaced by a newer execution; don't touch the destroyed window
+			end
 			if gui.Parent == nil then
 				log("WARN", "window was removed by the game - re-mounting")
 				mountGui(gui)
@@ -1970,6 +1983,10 @@ local function buildGui()
 			Font = T.font, TextSize = 14, TextXAlignment = Enum.TextXAlignment.Left, Parent = invRow,
 		})
 		w.availBox = textbox("0", "0", 110, function(txt)
+			if S.track == "running" or S.track == "paused" then
+				render() -- the box shows an estimate while tracking; don't store it as your real count
+				return
+			end
 			local n = tonumber((string.gsub(txt, ",", "")))
 			if n and n >= 0 then
 				Inv.manual[S.opts.material] = math.floor(n)
@@ -2376,6 +2393,13 @@ task.spawn(function()
 	while ARB.alive do
 		task.wait(0.25)
 		safe("tick", function()
+			-- While just planning (not tracking), re-check the area every few seconds so the
+			-- "already filled / required" numbers follow what you place. Big areas skip this and
+			-- are read fresh when you press START instead.
+			if S.plan and S.track == "off" and not S.pick and S.detect and Scan.order and Scan.done
+				and Scan.n <= 3000 and os.clock() - (Scan.lastDone or 0) > 3 then
+				Scan.done, Scan.i = false, 1
+			end
 			if S.track == "running" then
 				if Scan.order and Scan.filledCount >= Scan.n and Scan.n > 0 then
 					trackComplete()
