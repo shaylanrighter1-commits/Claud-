@@ -2,13 +2,13 @@
 	ABOVE[RUINS] | AUTO BUILDER   (single script for MacSploit)
 
 	HOW TO USE
-	  1. Join the game, stand near the spot, camera angled so the whole area is on screen.
-	  2. Paste this whole file into MacSploit and Execute. A small menu appears (top-right).
-	  3. SELECT AREA -> click corner A, then the opposite corner B (orange outline = what gets filled).
-	  4. Select your block in the hotbar (press its number). The menu shows what it detected.
-	  5. AUTO BUILD. It places the blocks one at a time and skips cells that are already filled.
-	     It stops if you run out of blocks or placement fails, and tells you which part failed.
-	     STOP stops it at once.
+	  1. Join the game and paste this whole file into MacSploit and Execute. A small menu appears.
+	  2. SELECT AREA -> click corner A, then the opposite corner B (orange outline = what gets filled).
+	  3. Select your block in the hotbar (press its number). The menu shows what it detected.
+	  4. AUTO BUILD. Rows are filled left to right, bottom layer first, one block at a time. Cells that
+	     are already filled are skipped. STOP stops it at once.
+	  While it builds it takes over the camera (looking straight down at each cell) and may walk your
+	  character to a safe spot within the game's placement distance; both are given back afterwards.
 	  RightShift hides / shows the menu.   Don't touch the mouse while it is building.
 
 	HOW IT FINDS YOUR BLOCK
@@ -22,14 +22,16 @@
 	  It never calls the game's remotes and never touches your inventory. For each empty cell it works out
 	  where on screen a face next to that cell is, moves the mouse there and clicks with your block in hand
 	  - exactly what you would do - so the game's own building code (range, ownership, inventory, cooldown)
-	  decides whether the block is placed. After each click it checks that a block really appeared in the
-	  right cell. Failures are labelled: [ITEM] [INPUT] [AIM] [PLACEMENT] [DETECTION].
+	  decides whether the block is placed. It never clicks beyond the placement distance (it walks to a
+	  safe spot instead, or reports OUT OF RANGE). After each click it checks that exactly one new real
+	  block appeared in exactly that cell, and stops if one lands anywhere else. The grid is never moved
+	  mid-build. Failures are labelled: [ITEM] [INPUT] [AIM] [RANGE] [PLACEMENT] [DETECTION].
 
 	NOTE: running scripts through an executor is against Roblox's Terms of Use and can get an account
 	banned, and automated clicking may also break the game's own rules. Use at your own risk.
 ]]
 
-local VERSION = "v3.1 custom-hotbar"
+local VERSION = "v4 exact-cells + range"
 
 ----------------------------------------------------------------------------------------------
 -- SETTINGS
@@ -43,9 +45,12 @@ local CONFIG = {
 	MAX_CELLS = 5000, -- biggest area allowed
 	DEFAULT_GRID = 4, -- studs per block, used only if the grid can't be detected
 
-	PLACE_DELAY = 0.12, -- pause between blocks (seconds)
-	PLACE_TIMEOUT = 1.2, -- how long to wait for a block to appear after a click
-	MAX_REACH = 80, -- ignore targets farther than this from your character (studs)
+	PLACE_DELAY = 0.3, -- pause between blocks (seconds). Accuracy over speed.
+	PLACE_TIMEOUT = 1.5, -- how long to wait for a block to appear after a click
+	PLACE_RANGE = 20, -- starting guess for the game's placement distance (studs). Shortened automatically
+	-- if the game refuses a placement from far away. Blocks beyond it are never clicked: I walk closer.
+	AUTO_WALK = true, -- walk to a SAFE spot (level solid ground, never into pits / off edges) when too far
+	AUTO_CAMERA = true, -- look straight down at each cell while building (given back afterwards)
 	MAX_FAILS = 3, -- this many failed blocks in a row stops the build
 
 	OCC_MIN_FRACTION = 0.45, -- a part counts as a "block" if every side >= this * grid size ...
@@ -169,6 +174,8 @@ local S = {
 	needed = nil, -- empty cells left in the selection (nil = still counting)
 	state = "idle", -- idle | building | done
 	stoppedRun = nil, -- runId of the build the STOP button ended
+	range = CONFIG.PLACE_RANGE, -- current belief about the game's placement distance (studs)
+	rangeShrinks = 0,
 	runId = 0,
 	placed = 0,
 	total = 0,
@@ -246,9 +253,11 @@ local function refreshOverlapFilter()
 	overlap.FilterDescendantsInstances = characters()
 end
 
--- does this part look like one of the game's blocks (not the ground plate, not a flower)?
+-- Does this part look like one of the game's REAL blocks (not the ground plate, not a flower)?
+-- Real blocks are opaque. The game's translucent placement preview ("ghost") and glass-like parts are
+-- not blocks: counting them made empty cells look filled and previews look like placed blocks.
 local function qualifies(p)
-	if not p:IsA("BasePart") or p:IsA("Terrain") or p.Transparency >= 0.9 then
+	if not p:IsA("BasePart") or p:IsA("Terrain") or p.Transparency >= 0.15 then
 		return false
 	end
 	local s = S.grid.size
@@ -453,20 +462,16 @@ end
 ----------------------------------------------------------------------------------------------
 -- 6. Selection geometry
 ----------------------------------------------------------------------------------------------
+-- One fixed order: bottom layer first, then row by row (z), and every row left to right (x).
+-- (No snaking: the same direction every row keeps the build predictable and easy to check.)
 local function buildOrder(mn, mx)
 	local xs, ys, zs, n = {}, {}, {}, 0
-	for y = mn.y, mx.y do -- bottom layer first
-		local row = 0
-		for z = mn.z, mx.z do -- row by row, alternating direction ("snake")
-			local x1, x2, step = mn.x, mx.x, 1
-			if row % 2 == 1 then
-				x1, x2, step = mx.x, mn.x, -1
-			end
-			for x = x1, x2, step do
+	for y = mn.y, mx.y do
+		for z = mn.z, mx.z do
+			for x = mn.x, mx.x do
 				n += 1
 				xs[n], ys[n], zs[n] = x, y, z
 			end
-			row += 1
 		end
 	end
 	return { n = n, xs = xs, ys = ys, zs = zs }
@@ -1301,10 +1306,7 @@ local function findAim(cell)
 	end
 	local s = S.grid.size
 	local c = cellCenter(cell)
-	local hrp = LocalPlayer.Character and LocalPlayer.Character:FindFirstChild("HumanoidRootPart")
-	if hrp and (hrp.Position - c).Magnitude > CONFIG.MAX_REACH then
-		return nil, "too far from you - walk closer"
-	end
+	-- (distance is handled by the caller: it never clicks beyond the placement range)
 	local why = "hidden from the camera - move it so you can see the area"
 	local view = cam.ViewportSize
 
@@ -1354,72 +1356,523 @@ local function findAim(cell)
 end
 
 ----------------------------------------------------------------------------------------------
--- 10. Placing one block, and checking that it really happened
+-- 9b. Camera: look straight down at the cell being built (restored afterwards)
+--     A cell in a one-block trench can't be seen from an ordinary behind-the-character camera, which
+--     leaves strips of blocks un-placed. From above, every cell's floor is visible.
 ----------------------------------------------------------------------------------------------
--- returns "placed" | "failed" | "noaim" | "nocursor" | "misplaced" | "broke" | "unseen" | "stopped", extra
---   failed   the click reached the game but no block appeared (the game / server didn't place one)
---   broke    a block DISAPPEARED when I clicked (the held item removes blocks instead of placing)
---   unseen   the block count dropped but I couldn't see a new block (grid / block size mismatch)
--- `run` is the build this click belongs to: if STOP is pressed (runId changes) NO click is sent.
-local function placeCell(cell, run)
-	local aim, why = findAim(cell)
-	if not aim then
-		return "noaim", why
+local Cam = { active = false, saved = nil, cf = nil }
+local CAM_STEP = "AutoBuilderCamera"
+
+function Cam.start()
+	local cam = workspace.CurrentCamera
+	if not cam then
+		return false
 	end
-	if S.runId ~= run then
-		return "stopped"
+	if Cam.active then
+		return true
+	end
+	Cam.saved = { cameraType = cam.CameraType }
+	Cam.cf = cam.CFrame
+	local ok, err = pcall(function()
+		cam.CameraType = Enum.CameraType.Scriptable
+		RunService:BindToRenderStep(CAM_STEP, Enum.RenderPriority.Camera.Value + 1, function()
+			local c = workspace.CurrentCamera
+			if c and Cam.active and Cam.cf then
+				if c.CameraType ~= Enum.CameraType.Scriptable then
+					c.CameraType = Enum.CameraType.Scriptable
+				end
+				c.CFrame = Cam.cf
+			end
+		end)
+	end)
+	if not ok then
+		log("WARN", "camera control unavailable:", err)
+		pcall(function()
+			cam.CameraType = Cam.saved.cameraType
+		end)
+		Cam.saved = nil
+		return false
+	end
+	Cam.active = true
+	return true
+end
+
+-- Hands the camera back to the game's own camera script.
+function Cam.stop()
+	if not Cam.active then
+		return
+	end
+	Cam.active = false
+	pcall(function()
+		RunService:UnbindFromRenderStep(CAM_STEP)
+	end)
+	local cam = workspace.CurrentCamera
+	if cam and Cam.saved then
+		pcall(function()
+			cam.CameraType = Cam.saved.cameraType
+		end)
+	end
+	Cam.saved = nil
+end
+onDestroy(Cam.stop)
+
+-- variant 0..3 = which side the camera sits on (a tall build in the way can hide one side)
+function Cam.look(point, variant)
+	if not Cam.active then
+		return false
 	end
 	local s = S.grid.size
-	local center = cellCenter(cell)
-	local ownedBefore = readOwned()
+	local height = math.clamp(s * 7, 20, 42)
+	local back = s * 1.5
+	local angle = (variant or 0) * (math.pi / 2)
+	Cam.cf = CFrame.lookAt(point + Vector3.new(math.cos(angle) * back, height, math.sin(angle) * back), point)
+	local cam = workspace.CurrentCamera
+	if cam then
+		cam.CFrame = Cam.cf
+	end
+	RunService.RenderStepped:Wait() -- let the camera, and the game's mouse-to-world maths, catch up
+	RunService.RenderStepped:Wait()
+	return true
+end
 
+----------------------------------------------------------------------------------------------
+-- 9c. Placement distance: stay within range; walk to a SAFE spot when the next blocks are too far
+--     (The game decides the real range. I start from a guess, and shorten it if the game refuses a
+--     placement from far away. If no safe spot exists, the blocks are reported as OUT OF RANGE.)
+----------------------------------------------------------------------------------------------
+local PathfindingService = game:GetService("PathfindingService")
+local Move = {}
+
+local function myParts()
+	local char = LocalPlayer.Character
+	return char and char:FindFirstChildOfClass("Humanoid"), char and char:FindFirstChild("HumanoidRootPart")
+end
+
+-- the first real ground under (x, z), looking down from fromY (invisible zone volumes don't count)
+local function groundAt(x, z, fromY)
+	local params = rayParams()
+	local ignore = characters()
+	local origin = Vector3.new(x, fromY, z)
+	for _ = 1, 4 do
+		params.FilterDescendantsInstances = ignore
+		local res = workspace:Raycast(origin, Vector3.new(0, -30, 0), params)
+		if not res then
+			return nil
+		end
+		local inst = res.Instance
+		if inst:IsA("BasePart") and not inst:IsA("Terrain") and inst.Transparency >= 0.9 then
+			ignore[#ignore + 1] = inst
+		else
+			return res
+		end
+	end
+	return nil
+end
+
+-- is this world position inside the selected build volume? (don't stand where blocks are going)
+local function insideBuildVolume(pos, margin)
+	if not S.min then
+		return false
+	end
+	local s, o = S.grid.size, S.grid.origin
+	return pos.X >= o.X + S.min.x * s - margin and pos.X <= o.X + (S.max.x + 1) * s + margin
+		and pos.Z >= o.Z + S.min.z * s - margin and pos.Z <= o.Z + (S.max.z + 1) * s + margin
+		and pos.Y >= o.Y + S.min.y * s - 1 and pos.Y <= o.Y + (S.max.y + 1) * s + 4
+end
+
+function Move.halt()
+	local hum, hrp = myParts()
+	if hum and hrp then
+		pcall(function()
+			hum:MoveTo(hrp.Position)
+		end)
+	end
+end
+
+function Move.groundY()
+	local _, hrp = myParts()
+	if not hrp then
+		return nil
+	end
+	local g = groundAt(hrp.Position.X, hrp.Position.Z, hrp.Position.Y)
+	return g and g.Position.Y
+end
+
+-- continuous, level ground along a straight line? (used only when the path finder gives nothing)
+local function straightClear(from, to, groundY)
+	local delta = Vector3.new(to.X - from.X, 0, to.Z - from.Z)
+	local steps = math.max(1, math.ceil(delta.Magnitude / 2))
+	for i = 1, steps do
+		local p = from + delta * (i / steps)
+		local g = groundAt(p.X, p.Z, groundY + 8)
+		if not g or math.abs(g.Position.Y - groundY) > 3 or g.Normal.Y < 0.6 then
+			return false
+		end
+	end
+	return true
+end
+
+-- Walk to `pos` (a spot already checked to be safe ground). Stops at once if STOP is pressed.
+function Move.walkTo(pos, run)
+	local hum, hrp = myParts()
+	if not hum or not hrp then
+		return false, "no character"
+	end
+	local startG = Move.groundY()
+	if not startG then
+		return false, "can't find the ground under you"
+	end
+	local waypoints
+	pcall(function()
+		local path = PathfindingService:CreatePath({ AgentRadius = 2, AgentHeight = 5, AgentCanJump = true })
+		path:ComputeAsync(hrp.Position, pos)
+		if path.Status == Enum.PathStatus.Success then
+			waypoints = path:GetWaypoints()
+		end
+	end)
+	if not waypoints then
+		if not straightClear(hrp.Position, pos, startG) then
+			return false, "no safe walking route"
+		end
+		waypoints = { { Position = pos } }
+	end
+	for _, wp in ipairs(waypoints) do
+		if S.runId ~= run then
+			Move.halt()
+			return false, "stopped"
+		end
+		hum:MoveTo(wp.Position)
+		if wp.Action == Enum.PathWaypointAction.Jump then
+			hum.Jump = true
+		end
+		local t0 = os.clock()
+		while true do
+			task.wait(0.1)
+			if S.runId ~= run then
+				Move.halt()
+				return false, "stopped"
+			end
+			local flat = Vector3.new(hrp.Position.X - wp.Position.X, 0, hrp.Position.Z - wp.Position.Z).Magnitude
+			if flat <= 2.5 or os.clock() - t0 > 4 then
+				break
+			end
+			if hrp.Position.Y < startG - 10 then
+				Move.halt()
+				return false, "the character fell"
+			end
+		end
+	end
+	Move.halt()
+	task.wait(0.2)
+	local flat = Vector3.new(hrp.Position.X - pos.X, 0, hrp.Position.Z - pos.Z).Magnitude
+	return flat <= 4, "couldn't reach the spot"
+end
+
+-- Safe places to stand that are within range of this cell AND the next few (best first).
+function Move.candidates(cell, upcoming)
+	local _, hrp = myParts()
+	local startG = Move.groundY()
+	if not hrp or not startG then
+		return {}
+	end
+	local c = cellCenter(cell)
+	local centers = { c }
+	for _, u in ipairs(upcoming) do
+		centers[#centers + 1] = cellCenter(u)
+	end
+	local range = S.range * 0.92
+	local list = {}
+	local function consider(x, z)
+		local g = groundAt(x, z, startG + 10)
+		if not g or math.abs(g.Position.Y - startG) > 2.5 or g.Normal.Y < 0.7 then
+			return -- not level solid ground (a pit, an edge, a wall...)
+		end
+		local stand = Vector3.new(x, g.Position.Y + 3, z)
+		if insideBuildVolume(stand, 1.5) or (stand - c).Magnitude > range then
+			return
+		end
+		local score = 0
+		for _, cc in ipairs(centers) do
+			if (stand - cc).Magnitude <= range then
+				score += 1
+			end
+		end
+		local walk = Vector3.new(x - hrp.Position.X, 0, z - hrp.Position.Z).Magnitude
+		list[#list + 1] = { pos = stand, score = score, walk = walk }
+	end
+	for _, f in ipairs({ 0.4, 0.65, 0.85 }) do
+		for k = 0, 11 do
+			local a = k * math.pi / 6
+			consider(c.X + math.cos(a) * S.range * f, c.Z + math.sin(a) * S.range * f)
+		end
+	end
+	table.sort(list, function(a, b)
+		if a.score ~= b.score then
+			return a.score > b.score
+		end
+		return a.walk < b.walk
+	end)
+	return list
+end
+
+-- Make sure the character is within placement range of `cell` (walking to a safe spot if it isn't).
+-- Returns true, or false + the reason.
+local function ensureInRange(cell, upcoming, run)
+	local _, hrp = myParts()
+	if not hrp then
+		return false, "no character"
+	end
+	local c = cellCenter(cell)
+	local function within()
+		return (hrp.Position - c).Magnitude <= S.range * 0.95 and not insideBuildVolume(hrp.Position, 0.5)
+	end
+	if within() then
+		return true
+	end
+	if not CONFIG.AUTO_WALK then
+		return false, "auto-walk is off and the blocks are too far from you"
+	end
+	local tried = 0
+	for _, cand in ipairs(Move.candidates(cell, upcoming)) do
+		tried += 1
+		if tried > 6 then
+			break
+		end
+		status(string.format("Moving to a safe spot in range (%.0f studs)...", cand.walk), "info")
+		local ok = Move.walkTo(cand.pos, run)
+		if S.runId ~= run then
+			return false, "stopped"
+		end
+		if ok and within() then
+			return true
+		end
+	end
+	return false, string.format("no safe place to stand within about %d studs", math.floor(S.range))
+end
+
+-- The game's blocks all sit on one lattice. Use the cube-shaped blocks around the selected area to find
+-- where that lattice is and snap my grid to it, keeping the same rectangle in the world.
+local function calibrateNear()
+	if not (S.min and S.a and S.b) then
+		return false
+	end
+	local s, o = S.grid.size, S.grid.origin
+	local center = Vector3.new(
+		o.X + (S.min.x + S.max.x + 1) / 2 * s, o.Y + (S.min.y + S.max.y + 1) / 2 * s, o.Z + (S.min.z + S.max.z + 1) / 2 * s
+	)
+	local half = Vector3.new((S.max.x - S.min.x + 1) * s, (S.max.y - S.min.y + 1) * s, (S.max.z - S.min.z + 1) * s).Magnitude / 2
+	local params = OverlapParams.new()
+	params.FilterType = Enum.RaycastFilterType.Exclude
+	params.FilterDescendantsInstances = characters()
+	params.MaxParts = 500
+	local rs, n = { x = {}, y = {}, z = {} }, 0
+	for _, p in ipairs(workspace:GetPartBoundsInRadius(center, half + s * 6, params)) do
+		if p.Transparency < 0.15 and isCube(p) and math.abs(p.Size.X - s) <= s * 0.03 then
+			local corner = p.Position - p.Size / 2
+			rs.x[#rs.x + 1] = ((corner.X % s) + s) % s
+			rs.y[#rs.y + 1] = ((corner.Y % s) + s) % s
+			rs.z[#rs.z + 1] = ((corner.Z % s) + s) % s
+			n += 1
+		end
+	end
+	if n < 6 then
+		log("INFO", string.format("lattice check: only %d nearby blocks of the right size - not enough to align the grid", n))
+		return false
+	end
+	-- the most common residue per axis (bucketed to 1/20 of a block), averaged within that bucket
+	local function consensus(list)
+		local buckets = {}
+		for _, r in ipairs(list) do
+			local k = math.floor(r / (s / 20) + 0.5) % 20
+			buckets[k] = buckets[k] or { sum = 0, n = 0 }
+			buckets[k].sum += (r > s * 0.95 and r - s or r) -- (a residue just under s is really just under 0)
+			buckets[k].n += 1
+		end
+		local best
+		for _, b in pairs(buckets) do
+			if not best or b.n > best.n then
+				best = b
+			end
+		end
+		return ((best.sum / best.n) % s + s) % s, best.n / #list
+	end
+	local nx, fx = consensus(rs.x)
+	local ny, fy = consensus(rs.y)
+	local nz, fz = consensus(rs.z)
+	if fx < 0.5 or fy < 0.5 or fz < 0.5 then
+		log("INFO", string.format("lattice check: the nearby blocks don't agree on one grid (%.0f%% / %.0f%% / %.0f%%)", fx * 100, fy * 100, fz * 100))
+		return false
+	end
+	local function circ(a, b)
+		local d = math.abs(a - b) % s
+		return math.min(d, s - d)
+	end
+	S.grid.confirmed = true
+	if circ(nx, o.X) > s * 0.04 or circ(ny, o.Y) > s * 0.04 or circ(nz, o.Z) > s * 0.04 then
+		local aw, bw = cellCenter(S.a), cellCenter(S.b)
+		S.grid.origin = Vector3.new(nx, ny, nz)
+		S.a, S.b = worldToCell(aw), worldToCell(bw)
+		log("INFO", string.format("grid aligned to the %d blocks around the area: origin (%.2f, %.2f, %.2f)", n, nx, ny, nz))
+		setSelection() -- same rectangle in the world, on the corrected grid
+	end
+	return true
+end
+
+----------------------------------------------------------------------------------------------
+-- 10. Placing one block, and checking that it really happened - and in the RIGHT cell
+----------------------------------------------------------------------------------------------
+-- Every new part that appears while a click is being checked (anywhere), so a block that lands in
+-- the wrong place can't hide from me.
+local Watch = { active = false, list = {} }
+keep(workspace.DescendantAdded:Connect(function(d)
+	if Watch.active and d:IsA("BasePart") then
+		Watch.list[#Watch.list + 1] = d
+	end
+end))
+
+local function inCharacter(part)
+	local model = part:FindFirstAncestorOfClass("Model")
+	return model ~= nil and model:FindFirstChildOfClass("Humanoid") ~= nil
+end
+
+-- new, opaque, block-sized parts near the aim point (previews and glass don't count)
+local function collectFresh(aimWorld)
+	local out = {}
+	for _, d in ipairs(Watch.list) do
+		if d.Parent and qualifies(d) and not (Preview.folder and d:IsDescendantOf(Preview.folder)) and not inCharacter(d) then
+			if (d.Position - aimWorld).Magnitude <= S.grid.size * 12 then
+				out[#out + 1] = d
+			end
+		end
+	end
+	return out
+end
+
+-- The game shows a translucent preview of where a click would put the block. If I can find it, compare
+-- it with the cell I mean to fill BEFORE clicking. Returns true (fine / no preview found) or false + why.
+local function ghostCheck(aim, cell)
+	local s = S.grid.size
+	local params = OverlapParams.new()
+	params.FilterType = Enum.RaycastFilterType.Exclude
+	params.FilterDescendantsInstances = characters()
+	params.MaxParts = 60
+	local best, bestD
+	for _, p in ipairs(workspace:GetPartBoundsInRadius(aim.world, s * 2.2, params)) do
+		if p:IsA("BasePart") and not p:IsA("Terrain") and not p.CanCollide and p.Transparency >= 0.15 and p.Transparency <= 0.98 then
+			local sz = p.Size
+			local mn, mx = math.min(sz.X, sz.Y, sz.Z), math.max(sz.X, sz.Y, sz.Z)
+			if mn >= s * 0.8 and mx <= s * 1.2 and mx - mn <= s * 0.12 then
+				local d = (p.Position - aim.world).Magnitude
+				if not bestD or d < bestD then
+					best, bestD = p, d
+				end
+			end
+		end
+	end
+	if not best then
+		return true -- no readable preview: the check after the click is what protects me
+	end
+	local g, c = best.Position, cellCenter(cell)
+	if math.max(math.abs(g.X - c.X), math.abs(g.Y - c.Y), math.abs(g.Z - c.Z)) <= s * 0.6 then
+		return true
+	end
+	local gc = worldToCell(g)
+	return false, string.format("the game's own placement preview is at cell (%d,%d,%d), not the target (%d,%d,%d)", gc.x, gc.y, gc.z, cell.x, cell.y, cell.z)
+end
+
+-- returns "placed" | "failed" | "noaim" | "nocursor" | "misplaced" | "broke" | "unseen" | "range" | "stopped", extra
+--   failed   the click reached the game but no block appeared (the game / server didn't place one)
+--   broke    a block DISAPPEARED when I clicked (the held item removes blocks instead of placing)
+--   unseen   the block count dropped but no new block was seen
+--   misplaced a block appeared, but not in the cell I aimed at
+-- `run` is the build this click belongs to: if STOP is pressed (runId changes) NO click is sent.
+local function placeCell(cell, run)
+	local s = S.grid.size
+	local center = cellCenter(cell)
+	local _, hrp = myParts()
+	if not hrp then
+		return "noaim", "no character"
+	end
+	-- never click beyond the placement distance: the caller walks closer first
+	local dist = (hrp.Position - center).Magnitude
+	if dist > S.range + 0.5 then
+		return "range", string.format("%.0f studs away", dist)
+	end
 	if UIS.MouseBehavior ~= Enum.MouseBehavior.Default then
 		return "nocursor", "the mouse is locked (shift-lock / first person) - switch to a free cursor"
 	end
-	local okMove, moved = pcall(Input.moveTo, aim.x, aim.y)
-	if not okMove then
-		log("ERROR", "mouse move failed:", moved)
-		if Input.switchToExecutor() then
-			return "failed"
+
+	-- 1) AIM: look straight down at the cell (or from another side if that view is blocked), put the cursor
+	--    on a face next to it, and check the game's own preview points at this cell
+	local aim, why
+	for variant = 0, (Cam.active and 3 or 0) do
+		if Cam.active then
+			Cam.look(center, variant)
 		end
-		return "nocursor", "this executor's mouse control errored (see console)"
-	end
-	if not moved then
-		if Input.switchToExecutor() then
-			return "failed"
+		if S.runId ~= run then
+			return "stopped"
 		end
-		return "nocursor", "couldn't move the mouse to the target"
+		local candidate, candidateWhy = findAim(cell)
+		if candidate then
+			local okMove, moved = pcall(Input.moveTo, candidate.x, candidate.y)
+			if not okMove then
+				log("ERROR", "mouse move failed:", moved)
+				if Input.switchToExecutor() then
+					return "failed"
+				end
+				return "nocursor", "this executor's mouse control errored (see console)"
+			end
+			if not moved then
+				if Input.switchToExecutor() then
+					return "failed"
+				end
+				return "nocursor", "couldn't move the mouse to the target"
+			end
+			task.wait(0.12) -- let the game update its placement preview for the new cursor position
+			if S.runId ~= run then
+				return "stopped"
+			end
+			local good, ghostWhy = ghostCheck(candidate, cell)
+			if good then
+				aim = candidate
+				break
+			end
+			why = ghostWhy
+		else
+			why = candidateWhy
+		end
 	end
-	-- Last check before the click. Nothing yields between this and Input.click's own position check,
-	-- so STOP can never be followed by a click.
+	if not aim then
+		return "noaim", why
+	end
+
+	-- 2) CLICK. Last STOP check; nothing yields between it and the click.
 	if S.runId ~= run then
 		return "stopped"
 	end
-	-- Snapshot of the blocks around the target, taken as late as possible (right before the click, no
-	-- waiting in between) so anything the game draws while the mouse moves isn't mistaken for a result.
 	refreshOverlapFilter()
 	local before = nearbyBlocks(center)
+	local ownedBefore = readOwned()
+	Watch.list, Watch.active = {}, true
 	Input.seen, Input.seenProcessed, Input.expecting = false, false, true
 	local okClick, clicked = pcall(Input.click, aim.x, aim.y)
 	task.wait(0.03)
-	if not okClick then
-		Input.expecting = false
-		log("ERROR", "mouse click failed:", clicked)
-		if Input.switchToExecutor() then
-			return "failed"
+	if not okClick or clicked == false then
+		Watch.active, Input.expecting = false, false
+		if not okClick then
+			log("ERROR", "mouse click failed:", clicked)
+			if Input.switchToExecutor() then
+				return "failed"
+			end
+			return "nocursor", "this executor's mouse click errored (see console)"
 		end
-		return "nocursor", "this executor's mouse click errored (see console)"
-	end
-	if clicked == false then
-		Input.expecting = false
 		return "nocursor", "the cursor moved away from the target, so I didn't click"
 	end
 
-	-- Wait for the result. A NEW block counts only if it is in the target cell (inCell); a new block
-	-- merely nearby (stray) is only considered if nothing shows up in the cell.
-	local inCell, stray, removed
+	-- 3) WATCH what appears. A block counts only if it is opaque, block-sized and NEW.
+	local fresh, removed, settleUntil = {}, false, nil
 	local t0 = os.clock()
-	while os.clock() - t0 < CONFIG.PLACE_TIMEOUT and not inCell and not removed do
+	while true do
 		task.wait(0.05)
 		refreshOverlapFilter()
 		for inst in pairs(before) do
@@ -1428,28 +1881,27 @@ local function placeCell(cell, run)
 				break
 			end
 		end
-		if not removed then
-			for inst in pairs(nearbyBlocks(center)) do
-				if not before[inst] then
-					if (inst.Position - center).Magnitude <= s * 0.9 then
-						inCell = inst
-						break
-					elseif not stray and aim.world and (inst.Position - aim.world).Magnitude <= s * 1.5 then
-						stray = inst
-					end
-				end
-			end
+		if removed then
+			break
+		end
+		fresh = collectFresh(aim.world)
+		if #fresh > 0 and not settleUntil then
+			settleUntil = os.clock() + 0.2 -- give a possible second block time to show up as well
+		end
+		if settleUntil and os.clock() >= settleUntil then
+			break
+		end
+		if #fresh == 0 and os.clock() - t0 >= CONFIG.PLACE_TIMEOUT then
+			break
 		end
 	end
-	-- Did Roblox's input system see my click, and did something consume it? (Judged over the whole wait,
-	-- since the signal can arrive a few frames late on a slow client.)
-	Input.expecting = false
+	Watch.active, Input.expecting = false, false
 	S.lastAttempt = { seen = Input.seen, processed = Input.seenProcessed, overGui = gameGuiAt(aim.x, aim.y) }
 	if removed then
 		return "broke"
 	end
-	local newPart = inCell or stray
-	if not newPart then
+	if #fresh == 0 then
+		task.wait(0.3) -- the count label can lag behind the world
 		local ownedAfter = readOwned()
 		if ownedBefore ~= nil and ownedAfter ~= nil and ownedAfter < ownedBefore then
 			return "unseen", string.format("%d -> %d", ownedBefore, ownedAfter)
@@ -1457,20 +1909,46 @@ local function placeCell(cell, run)
 		return "failed"
 	end
 
-	-- A block appeared. Is the game's grid where we think it is?
-	local off = newPart.Position - center
-	local wrapped = Vector3.new(wrapHalf(off.X, s), wrapHalf(off.Y, s), wrapHalf(off.Z, s))
-	if math.max(math.abs(wrapped.X), math.abs(wrapped.Y), math.abs(wrapped.Z)) > s * 0.08 then
-		S.grid.origin = S.grid.origin + wrapped
-		log("INFO", string.format("grid corrected by (%.2f, %.2f, %.2f)", wrapped.X, wrapped.Y, wrapped.Z))
+	-- 4) VERIFY the position of what appeared. First block of a job: allow a small grid offset (and
+	--    adopt it). Every later block must sit exactly in its cell - the grid is never moved mid-build.
+	local first = S.placed == 0
+	local tol = first and 0.45 or 0.2
+	local match, matchOff
+	for _, p in ipairs(fresh) do
+		local off = p.Position - center
+		local cheb = math.max(math.abs(off.X), math.abs(off.Y), math.abs(off.Z))
+		if cheb <= s * tol and (not matchOff or cheb < matchOff) then
+			match, matchOff = p, cheb
+		end
+	end
+	if not match then
+		local p = fresh[1]
+		local landed = worldToCell(p.Position)
+		local inside = landed.x >= S.min.x and landed.x <= S.max.x and landed.y >= S.min.y and landed.y <= S.max.y
+			and landed.z >= S.min.z and landed.z <= S.max.z
+		return "misplaced", string.format(
+			"a block landed in cell (%d,%d,%d) instead of (%d,%d,%d)%s", landed.x, landed.y, landed.z, cell.x, cell.y, cell.z,
+			inside and "" or " - OUTSIDE the selected area"
+		)
+	end
+	for _, p in ipairs(fresh) do
+		if p ~= match and (p.Position - match.Position).Magnitude > s * 0.45 then
+			return "misplaced", "more than one new block appeared after a single click"
+		end
+	end
+	if first and matchOff > s * 0.05 then
+		local off = match.Position - center
+		S.grid.origin = S.grid.origin + off -- the game's lattice is slightly off mine: adopt it once, now
+		S.grid.confirmed = true
+		log("INFO", string.format("grid aligned by the first block: shifted (%.2f, %.2f, %.2f)", off.X, off.Y, off.Z))
 		Preview.setArea(S.min, S.max)
 	end
-	local landed = worldToCell(newPart.Position)
-	if not sameCell(landed, cell) then
-		return "misplaced", string.format("a block landed in cell (%d,%d,%d) instead of (%d,%d,%d)", landed.x, landed.y, landed.z, cell.x, cell.y, cell.z)
+	if not sameCell(worldToCell(match.Position), cell) then
+		return "misplaced", string.format("a block landed in a different cell than (%d,%d,%d)", cell.x, cell.y, cell.z)
 	end
 	return "placed"
 end
+
 
 ----------------------------------------------------------------------------------------------
 -- 11. The block in your hand + the build loop
@@ -1580,6 +2058,10 @@ local function failureReason()
 	return diag("PLACEMENT", "My clicks reached the game, on the target, but it didn't place a block. Usual causes: out of placement range, not your land, a cooldown, the game needs a different action (hold / build mode), or the held item can't be placed. That is the game/server refusing, not the script.")
 end
 
+local function cellKey(c)
+	return c.x .. "," .. c.y .. "," .. c.z
+end
+
 local function runBuild(run)
 	local order = S.order
 	local block = S.block -- (kept in a local: S.block can be cleared by the tick once STOP is pressed)
@@ -1602,131 +2084,185 @@ local function runBuild(run)
 			refreshOverlapFilter()
 		end
 	end
+	-- Every job starts from zero, and can never place more blocks than the empty cells it just counted.
 	S.total, S.placed = #todo, 0
 	if S.total == 0 then
 		S.needed = 0
 		stopBuild(run, "Nothing to build - the area is already full.", "info")
 		return
 	end
-	log("INFO", string.format("build started: %d blocks to place (%d cells in the area)", S.total, order.n))
+	log("INFO", string.format("build started: %d blocks to place (%d cells in the area, rows left-to-right, bottom layer first)", S.total, order.n))
+
+	local placedSet = {} -- cells THIS job has filled: never clicked a second time
+	S.rangeShrinks = 0
+	if CONFIG.AUTO_CAMERA and not Cam.start() then
+		log("WARN", "camera control unavailable - aiming from your own camera")
+	end
 
 	local fails = 0
 	for pass = 1, 2 do
 		fails = 0
-		local deferred, lastWhy, noaimCount, anyFailed = {}, nil, 0, false
-		for _, i in ipairs(todo) do
+		local deferred, lastWhy, noaimCount, anyFailed, anyRange = {}, nil, 0, false, false
+		for idx, i in ipairs(todo) do
 			if S.runId ~= run then
 				return
 			end
+			if S.placed >= S.total then
+				break -- hard cap: the job is complete, never place one more
+			end
 			local cell = { x = order.xs[i], y = order.ys[i], z = order.zs[i] }
+			local key = cellKey(cell)
 			refreshOverlapFilter()
 
-			if cellOccupied(cell) then
+			if placedSet[key] then
+				-- this job already filled it: nothing to do, and never click here again
+			elseif cellOccupied(cell) then
 				S.total -= 1 -- filled in the meantime: skip it, don't spend a block
 			else
-				local result, extra
-				for attempt = 1, 2 do
-					if S.runId ~= run then
-						return
-					end
-					-- every click (the retry too) goes through the same checks
-					local owned = readOwned()
-					if owned == nil then
-						for _ = 1, 4 do -- a redrawn hotbar can make the count unreadable for a moment
-							task.wait(0.2)
+				-- 1) RANGE: never click beyond the game's placement distance. Walk to a safe spot first.
+				local upcoming = {}
+				for k = idx + 1, math.min(#todo, idx + 10) do
+					local j = todo[k]
+					upcoming[#upcoming + 1] = { x = order.xs[j], y = order.ys[j], z = order.zs[j] }
+				end
+				local inRange, rangeWhy = ensureInRange(cell, upcoming, run)
+				if S.runId ~= run then
+					return
+				end
+				if not inRange then
+					deferred[#deferred + 1] = i
+					lastWhy = rangeWhy
+					anyRange = true
+				else
+					local result, extra
+					for attempt = 1, 3 do
+						if S.runId ~= run then
+							return
+						end
+						-- every click (the retry too) goes through the same checks
+						local owned = readOwned()
+						if owned == nil then
+							for _ = 1, 4 do -- a redrawn hotbar can make the count unreadable for a moment
+								task.wait(0.2)
+								if S.runId ~= run then
+									return
+								end
+								owned = readOwned()
+								if owned ~= nil then
+									break
+								end
+							end
+						end
+						if owned == nil then
+							if itemGone() then
+								return outOfBlocks(run) -- the stack left your hotbar: that's what running out looks like here
+							end
+							return stopBuild(run, diag("ITEM", "I can't read your " .. block.name .. " count any more (did the hotbar change?). Stopped."), "error")
+						end
+						if owned <= 0 then
+							return outOfBlocks(run)
+						end
+						if not ensureEquipped() then
+							return stopBuild(run, diag("ITEM", "'" .. block.name .. "' isn't the selected hotbar item any more. Select it again and press AUTO BUILD."), "error")
+						end
+						if S.runId ~= run then
+							return
+						end
+						result, extra = placeCell(cell, run)
+						if result ~= "failed" or attempt == 3 then
+							break
+						end
+						-- The click reached the game and no block appeared.
+						task.wait(0.25) -- (a short placement cooldown, or a laggy server)
+						if S.runId ~= run then
+							return
+						end
+						refreshOverlapFilter()
+						if cellOccupied(cell) then
+							result = "placed" -- it showed up late: never click a filled cell again
+							log("INFO", string.format("block appeared late in cell (%d,%d,%d)", cell.x, cell.y, cell.z))
+							break
+						end
+						-- Was I simply too far away? Then the game's range is shorter than I assumed:
+						-- shorten it, and go closer before trying again.
+						local _, hrp = myParts()
+						local dist = hrp and (hrp.Position - cellCenter(cell)).Magnitude or 0
+						if dist > 9 and S.rangeShrinks < 4 then
+							S.rangeShrinks += 1
+							S.range = math.max(8, dist - 3)
+							log("INFO", string.format("placement refused at %.1f studs - assuming the game's range is about %.0f studs", dist, S.range))
+							local okR, whyR = ensureInRange(cell, {}, run)
 							if S.runId ~= run then
 								return
 							end
-							owned = readOwned()
-							if owned ~= nil then
+							if not okR then
+								result, extra = "range", whyR
 								break
 							end
 						end
 					end
-					if owned == nil then
-						if itemGone() then
-							return outOfBlocks(run) -- the stack left your hotbar: that's what running out looks like here
+
+					if S.runId ~= run then
+						-- STOP was pressed while that click was in flight. If the block really appeared,
+						-- still count it - but only when no newer build has started in the meantime.
+						if result == "placed" and S.runId == run + 1 and S.state ~= "building" then
+							S.placed += 1
+							S.placedAll += 1
 						end
-						return stopBuild(run, diag("ITEM", "I can't read your " .. block.name .. " count any more (did the hotbar change?). Stopped."), "error")
-					end
-					if owned <= 0 then
-						return outOfBlocks(run)
-					end
-					if not ensureEquipped() then
-						return stopBuild(run, diag("ITEM", "'" .. block.name .. "' isn't the selected hotbar item any more. Select it again and press AUTO BUILD."), "error")
-					end
-					if S.runId ~= run then
 						return
 					end
-					result, extra = placeCell(cell, run)
-					if result ~= "failed" or attempt == 2 then
-						break
-					end
-					task.wait(0.25) -- the game may have a short placement cooldown: look again, then retry once
-					if S.runId ~= run then
-						return
-					end
-					refreshOverlapFilter()
-					if cellOccupied(cell) then
-						result = "placed" -- it showed up late (laggy server): never click a filled cell again
-						log("INFO", string.format("block appeared late in cell (%d,%d,%d)", cell.x, cell.y, cell.z))
-						break
-					end
-				end
 
-				if S.runId ~= run then
-					-- STOP was pressed while that click was in flight. If the block really appeared,
-					-- still count it - but only when no newer build has started in the meantime.
-					if result == "placed" and S.runId == run + 1 and S.state ~= "building" then
-						S.placed += 1
+					if result == "placed" then
+						S.placed += 1 -- counted only because a block was SEEN appearing in exactly this cell
 						S.placedAll += 1
-					end
-					return
-				end
-
-				if result == "placed" then
-					S.placed += 1 -- counted only because a block was SEEN appearing in this cell
-					S.placedAll += 1
-					fails = 0
-					if S.verifiedName ~= norm(block.name) then
-						S.verifiedName = norm(block.name)
-						status("Placement VERIFIED: a real block appeared in the world. Building...", "success")
-					end
-					render()
-					task.wait(CONFIG.PLACE_DELAY)
-				elseif result == "noaim" then
-					deferred[#deferred + 1] = i
-					lastWhy = extra
-					noaimCount += 1
-					if noaimCount % 8 == 0 then
-						task.wait() -- many un-aimable cells: give the game a frame so it never freezes
-					end
-				elseif result == "nocursor" then
-					return stopBuild(run, diag("INPUT", tostring(extra) .. "."), "error")
-				elseif result == "misplaced" then
-					return stopBuild(run, diag("PLACEMENT", tostring(extra) .. ". Stopped so I don't build in the wrong place."), "error")
-				elseif result == "broke" then
-					return stopBuild(run, diag("PLACEMENT", "A block DISAPPEARED when I clicked - the held item removes blocks instead of placing them. Stopped before breaking more. Select a placeable block."), "error")
-				elseif result == "unseen" then
-					return stopBuild(run, diag("DETECTION", "A block was used up (" .. tostring(extra) .. ") but I couldn't see it appear in the target cell, so I stopped. The game's block size / grid probably isn't what I detected - try clicking a placed block as Point A."), "error")
-				else -- "failed": the click didn't produce a block
-					deferred[#deferred + 1] = i
-					anyFailed = true
-					fails += 1
-					if fails >= CONFIG.MAX_FAILS then
-						return stopBuild(run, failureReason(), "error")
+						placedSet[key] = true
+						fails = 0
+						if S.verifiedName ~= norm(block.name) then
+							S.verifiedName = norm(block.name)
+							status("Placement VERIFIED: a real block appeared in the world. Building...", "success")
+						end
+						render()
+						task.wait(CONFIG.PLACE_DELAY)
+					elseif result == "noaim" then
+						deferred[#deferred + 1] = i
+						lastWhy = extra
+						noaimCount += 1
+						if noaimCount % 8 == 0 then
+							task.wait() -- many un-aimable cells: give the game a frame so it never freezes
+						end
+					elseif result == "range" then
+						deferred[#deferred + 1] = i
+						lastWhy = extra
+						anyRange = true
+					elseif result == "nocursor" then
+						return stopBuild(run, diag("INPUT", tostring(extra) .. "."), "error")
+					elseif result == "misplaced" then
+						return stopBuild(run, diag("PLACEMENT", tostring(extra) .. ". Stopped so I don't build in the wrong place."), "error")
+					elseif result == "broke" then
+						return stopBuild(run, diag("PLACEMENT", "A block DISAPPEARED when I clicked - the held item removes blocks instead of placing them. Stopped before breaking more. Select a placeable block."), "error")
+					elseif result == "unseen" then
+						return stopBuild(run, diag("DETECTION", "A block was used up (" .. tostring(extra) .. ") but I couldn't see it appear in the target cell, so I stopped. The game's block size / grid probably isn't what I detected - try clicking a placed block as Point A."), "error")
+					else -- "failed": the click didn't produce a block
+						deferred[#deferred + 1] = i
+						anyFailed = true
+						fails += 1
+						if fails >= CONFIG.MAX_FAILS then
+							return stopBuild(run, failureReason(), "error")
+						end
 					end
 				end
 			end
 		end
 		todo = deferred
-		if #todo == 0 then
+		if S.placed >= S.total or #todo == 0 then
 			break
 		end
 		if pass == 2 then
 			if anyFailed then
 				-- some clicks DID go out and the game didn't place a block: that's not an aiming problem
 				return stopBuild(run, string.format("%d blocks weren't placed. ", #todo) .. failureReason(), "error")
+			elseif anyRange then
+				return stopBuild(run, diag("RANGE", string.format("OUT OF RANGE: %d blocks can't be reached (%s). I won't click beyond the game's placement distance.", #todo, lastWhy or "no safe place to stand")), "error")
 			end
 			return stopBuild(run, diag("AIM", string.format("%d blocks couldn't be reached (%s).", #todo, lastWhy or "can't aim at them")), "error")
 		end
@@ -1738,7 +2274,7 @@ local function runBuild(run)
 		return
 	end
 	S.state = "done"
-	status(string.format("Done! %d blocks placed (each one confirmed in the world).", S.placed), "success")
+	status(string.format("Done! %d of %d blocks placed (each one confirmed in the world).", S.placed, S.total), "success")
 	S.a, S.b = nil, nil
 	setSelection() -- clears the orange outline
 	Preview.clear()
@@ -1808,15 +2344,25 @@ local function autoBuild()
 		return -- a second click arrived while the checks above were running
 	end
 
+	-- 4) GRID: snap my grid to where the game's own blocks around the area really sit (same rectangle).
+	--    Wrong cell positions come from a grid that is off by even a fraction of a block.
+	local aligned = calibrateNear()
+	if not S.order then
+		status("Select the area again - it changed while I was aligning the grid.", "error")
+		return
+	end
+
 	log("INFO", string.format(
-		"PREFLIGHT ok: item='%s' [%s] owned=%d (%s) | mouse=%s | grid=%.2f | area=%s (%d cells)",
-		S.block.name, S.block.source or "?", owned, tostring(ownedSource), tostring(Input.method), S.grid.size, dimsText(), S.count
+		"PREFLIGHT ok: item='%s' [%s] owned=%d (%s) | mouse=%s | grid=%.2f origin=(%.2f,%.2f,%.2f) %s | area=%s (%d cells) | range=%d",
+		S.block.name, S.block.source or "?", owned, tostring(ownedSource), tostring(Input.method), S.grid.size,
+		S.grid.origin.X, S.grid.origin.Y, S.grid.origin.Z, aligned and "aligned to nearby blocks" or "not cross-checked",
+		dimsText(), S.count, math.floor(S.range)
 	))
 	S.runId += 1
 	local run = S.runId
 	S.state = "building"
 	S.worker = true -- true while a build coroutine is still alive (even just unwinding after STOP)
-	S.placed, S.total = 0, 0
+	S.placed, S.total = 0, 0 -- a new job: the counter always starts from zero
 	if S.verifiedName == norm(S.block.name) then
 		status(string.format("Building with %s x%d.", S.block.name, owned), "info")
 	else
@@ -1824,6 +2370,8 @@ local function autoBuild()
 	end
 	task.spawn(function()
 		safe("build", runBuild, run)
+		Cam.stop() -- however the build ended, the camera goes back to the game
+		Move.halt()
 		S.worker = false
 		if S.runId == run and S.state == "building" then
 			S.state = "idle" -- the loop died unexpectedly; never leave the menu stuck
@@ -2016,6 +2564,8 @@ local function stop()
 		S.stoppedRun = S.runId
 		S.runId += 1 -- the build loop sees this and exits before its next click
 		S.state = "idle"
+		Move.halt() -- stop walking right now
+		Cam.stop() -- and give the camera back right now
 		status("Stopping...", "info")
 		S.needed = nil
 		task.spawn(countUnfilled)
