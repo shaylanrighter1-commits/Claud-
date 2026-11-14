@@ -1,0 +1,38 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Demo Arena · SURVEV.IO | CONTROL CENTER</title>
+    <link rel="stylesheet" href="../ui/dashboard.css" />
+    <link rel="stylesheet" href="demo.css" />
+  </head>
+  <body>
+    <canvas id="stage" aria-label="Demo arena"></canvas>
+
+    <div class="scc-root demo-bar" data-scc-ui>
+      <div class="bar-brand">DEMO ARENA</div>
+      <label class="bar-field">
+        <span>Scenario</span>
+        <select id="scenario" aria-label="Scenario"></select>
+      </label>
+      <label class="bar-field">
+        <span>Bots</span>
+        <input id="bots" type="number" min="2" max="14" value="8" aria-label="Bot count" />
+      </label>
+      <button id="reseed" class="bar-btn" type="button">New map</button>
+      <button id="restart" class="bar-btn" type="button">Restart</button>
+      <span id="hint" class="bar-hint"></span>
+    </div>
+
+    <div class="scc-root demo-help" data-scc-ui>
+      <span><kbd>W</kbd><kbd>A</kbd><kbd>S</kbd><kbd>D</kbd> move</span>
+      <span><kbd>Mouse</kbd> aim</span>
+      <span><kbd>Click</kbd> / <kbd>Space</kbd> fire</span>
+      <span><kbd>Left Shift</kbd> aim-lock test</span>
+      <span><kbd>Wheel</kbd> zoom</span>
+    </div>
+
+    <script type="module" src="demo.js"></script>
+  </body>
+</html>

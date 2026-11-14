@@ -1,0 +1,6 @@
+html, body { margin: 0; padding: 0; background: #08090b; }
+body { width: 400px; height: 590px; display: flex; flex-direction: column; overflow: hidden; }
+.popup-shell { flex: none; padding: 12px 12px 4px; background: #08090b; }
+#actions { display: grid; grid-template-columns: 1.15fr 1fr; gap: 8px; }
+#actions .scc-btn { margin: 0; padding: 10px 12px; width: 100%; }
+#dash { flex: 1; min-height: 0; }

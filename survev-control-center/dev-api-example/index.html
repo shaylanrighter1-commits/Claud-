@@ -1,0 +1,19 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Dev API Example · private test build</title>
+    <style>
+      html, body { margin: 0; height: 100%; background: #0b0c0f; color: #cfd5e3; font: 13px -apple-system, 'SF Pro Text', system-ui, sans-serif; overflow: hidden; }
+      canvas { position: fixed; inset: 0; width: 100%; height: 100%; display: block; cursor: crosshair; }
+      #banner { position: fixed; left: 50%; top: 14px; transform: translateX(-50%); padding: 8px 16px; border-radius: 20px; background: #15171b; border: 1px solid #2a2d34; z-index: 2; }
+      #banner b { color: #2f7bff; }
+    </style>
+  </head>
+  <body>
+    <canvas id="game"></canvas>
+    <div id="banner"><b>Example game</b> · private test build · WASD move · mouse aim · click fire — the Control Center overlay appears automatically once the handshake succeeds</div>
+    <script type="module" src="main.js"></script>
+  </body>
+</html>

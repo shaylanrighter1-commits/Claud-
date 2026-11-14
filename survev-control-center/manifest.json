@@ -1,0 +1,65 @@
+{
+  "manifest_version": 3,
+  "name": "SURVEV.IO | CONTROL CENTER",
+  "short_name": "SCC Dev Tools",
+  "version": "1.0.0",
+  "description": "Developer visualization and diagnostics suite for your own 2D shooter: standalone demo arena, replay testing, and a private-session dev API adapter. Never runs on public multiplayer sites.",
+  "minimum_chrome_version": "111",
+  "icons": {
+    "16": "assets/icons/icon16.png",
+    "48": "assets/icons/icon48.png",
+    "128": "assets/icons/icon128.png"
+  },
+  "action": {
+    "default_title": "SURVEV.IO | CONTROL CENTER",
+    "default_popup": "src/popup/popup.html",
+    "default_icon": {
+      "16": "assets/icons/icon16.png",
+      "48": "assets/icons/icon48.png",
+      "128": "assets/icons/icon128.png"
+    }
+  },
+  "background": {
+    "service_worker": "src/background/service-worker.js",
+    "type": "module"
+  },
+  "permissions": ["storage", "activeTab"],
+  "content_scripts": [
+    {
+      "matches": [
+        "http://localhost/*",
+        "https://localhost/*",
+        "http://127.0.0.1/*",
+        "https://127.0.0.1/*",
+        "http://*.localhost/*",
+        "http://*.local/*"
+      ],
+      "js": ["src/content/loader.js"],
+      "run_at": "document_idle",
+      "all_frames": false
+    }
+  ],
+  "web_accessible_resources": [
+    {
+      "resources": ["src/*", "assets/*"],
+      "matches": [
+        "http://localhost/*",
+        "https://localhost/*",
+        "http://127.0.0.1/*",
+        "https://127.0.0.1/*",
+        "http://*.localhost/*",
+        "http://*.local/*"
+      ]
+    }
+  ],
+  "commands": {
+    "toggle-master": {
+      "suggested_key": { "default": "Alt+Shift+S" },
+      "description": "Master ON / OFF"
+    },
+    "toggle-dashboard": {
+      "suggested_key": { "default": "Alt+Shift+D" },
+      "description": "Show / hide the dashboard"
+    }
+  }
+}

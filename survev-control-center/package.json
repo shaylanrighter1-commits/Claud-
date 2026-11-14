@@ -1,0 +1,11 @@
+{
+  "name": "survev-control-center",
+  "version": "1.0.0",
+  "private": true,
+  "type": "module",
+  "description": "SURVEV.IO | CONTROL CENTER - Chrome MV3 developer visualization suite",
+  "scripts": {
+    "test": "node tests/engine.test.mjs",
+    "package": "bash scripts/package.sh"
+  }
+}
