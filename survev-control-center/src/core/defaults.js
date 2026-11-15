@@ -1,7 +1,7 @@
 // Central configuration schema, defaults, presets and themes.
 
 export const PRODUCT = 'SURVEV.IO | CONTROL CENTER';
-export const VERSION = '1.2.0';
+export const VERSION = '1.3.0';
 export const SCHEMA_VERSION = 1;
 
 /** Test weapons used by the demo arena and as fallbacks for dev snapshots. */
@@ -128,7 +128,7 @@ export const DEFAULT_LOCAL = {
   master: true,
   activeProfile: '',
   profiles: {},
-  ui: { tab: 'aiming', minimized: false, hidden: false, x: -1, y: -1 },
+  ui: { tab: 'aiming', minimized: false, hidden: false, x: -1, y: -1, advanced: false },
   dev: { token: 'scc-dev-token', autoAttach: true },
   perf: {
     original: null,

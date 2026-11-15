@@ -46,6 +46,7 @@ const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
   hook(demo, 'demo');
   await demo.goto(`chrome-extension://${extId}/src/demo/demo.html`);
   await demo.waitForSelector('.scc-panel');
+  await demo.evaluate(() => window.__scc.state.set('loc.ui.advanced', true)); // this suite exercises advanced controls
   await sleep(1500);
   await demo.mouse.move(900, 380);
   await sleep(400);
@@ -161,10 +162,10 @@ const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
   });
   check('before/after benchmark produces a comparison', !!benchRes && benchRes.rows.length === 5, benchRes && benchRes.verdict);
   check('A/A comparison does not claim improvement', benchRes && benchRes.verdict !== 'improved', benchRes && `${benchRes.verdict} p=${benchRes.p.toFixed(2)}`);
-  await demo.locator('.pf-preset').first().locator('.scc-btn').click();
+  await demo.click('.pf-pbtn[data-id="maxfps"]');
   await sleep(300);
   check('MAX FPS preset turns on lightweight dashboard', await demo.evaluate(() => window.__scc.state.data.cfg.perf.liteUi && document.querySelector('.scc-root.floating').classList.contains('lite')));
-  check('preset result lists game settings as unavailable in demo', /Not available on this page/.test(await demo.locator('.pf-result').textContent()));
+  check('preset result lists game settings as unavailable in demo', /Not on this page/.test(await demo.locator('.pf-result').textContent()));
   await demo.evaluate(() => window.__scc.perf.restoreOriginal());
   await sleep(200);
   check('restore original undoes preset', await demo.evaluate(() => window.__scc.state.data.cfg.perf.liteUi === false && window.__scc.state.data.loc.perf.original === null));
@@ -207,9 +208,9 @@ const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
   await sleep(2500);
   await dev.click('#scc-tab-perf');
   await sleep(800);
-  check('game settings controls detected', /detected on this page/.test(await dev.locator('.pf-detect').textContent()));
+  check('game settings controls detected', (await dev.locator('.scc-page.on .pf-gs-row').count()) === 4);
   await dev.screenshot({ path: path.join(shots, '13-dev-perf.png') });
-  await dev.locator('.pf-preset').first().locator('.scc-btn').click(); // MAX FPS
+  await dev.click('.pf-pbtn[data-id="maxfps"]'); // MAX FPS
   await sleep(300);
   const afterApply = await dev.evaluate(() => ({ shake: document.getElementById('screenShake').checked, hi: document.getElementById('highResTex').checked }));
   check('MAX FPS switched screen shake off via the game control', afterApply.shake === false);

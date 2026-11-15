@@ -391,3 +391,41 @@
 .pf-source { margin: 2px 0 8px; padding: 7px 10px; border-radius: 9px; font-size: 11px; line-height: 1.4; background: var(--well); border: 1px solid var(--line); color: var(--muted); }
 .pf-source.live { border-color: rgba(52, 211, 153, 0.35); color: #9be7c4; }
 .pf-source.demo { border-color: rgba(251, 191, 36, 0.4); color: #ffd37a; }
+
+/* ---------- v1.3: compact layout, simple mode, icon minimize ---------- */
+.scc-root.floating .scc-float { width: 344px; }
+.scc-root.floating.min .scc-float { width: auto; }
+.scc-root.simple .adv { display: none !important; }
+.scc-page-head { padding: 12px 4px 8px; }
+.scc-page-head h2 { font-size: 15px; }
+.scc-page-head p { font-size: 11.5px; }
+.scc-card-t { padding: 10px 6px 10px 12px; }
+.scc-card-inner { padding: 0 12px; }
+.scc-card-inner > :last-child { margin-bottom: 12px; }
+.scc-head { padding: 10px 10px 8px 12px; }
+.scc-title { font-size: 11.5px; letter-spacing: 0.08em; gap: 6px; }
+.scc-title span { font-size: 10px; letter-spacing: 0.12em; }
+.scc-more { display: block; width: 100%; margin: 4px 0 6px; padding: 9px; border-radius: 11px; background: transparent; border: 1px dashed var(--line2); color: var(--muted); font-size: 11.5px; font-weight: 650; }
+.scc-more:hover { color: var(--text); border-color: var(--accent); }
+.scc-pill { width: 46px; height: 46px; padding: 0; justify-content: center; border-radius: 50%; position: relative; gap: 0; }
+.scc-pill .scc-logo.sm svg { width: 30px; height: 30px; }
+.scc-pill .pill-dot { position: absolute; right: 3px; top: 3px; width: 9px; height: 9px; border: 2px solid #0e0f12; }
+.pf-fps { font-size: 46px; }
+.pf-pgrid { display: grid; grid-template-columns: repeat(3, 1fr); gap: 6px; }
+.pf-pbtn { display: flex; flex-direction: column; align-items: center; gap: 2px; padding: 10px 4px; border-radius: 11px; background: var(--well); border: 1px solid var(--line2); transition: all 0.18s var(--ease); }
+.pf-pbtn b { font-size: 11px; font-weight: 850; letter-spacing: 0.08em; }
+.pf-pbtn small { font-size: 10px; color: var(--muted); }
+.pf-pbtn:hover:not(:disabled) { border-color: var(--accent); }
+.pf-pbtn.on { background: var(--soft); border-color: color-mix(in srgb, var(--accent) 70%, transparent); box-shadow: 0 0 16px -6px var(--glow); }
+.pf-pbtn.on small { color: #cfe0ff; }
+.pf-presets.adv { margin-top: 8px; }
+.pf-gs { gap: 6px; margin-top: 2px; }
+.pf-gs-row { padding: 8px 10px; }
+.pf-gs-top { flex-wrap: nowrap; justify-content: space-between; gap: 10px; }
+.pf-gs-top .scc-label { font-size: 12px; }
+.scc-hint.warn { color: var(--warn); }
+.pf-source { padding: 5px 9px; font-size: 10px; font-weight: 700; letter-spacing: 0.06em; }
+.pf-chips { gap: 5px; }
+.pf-chip { padding: 6px 7px; }
+.pf-chip b { font-size: 13px; white-space: nowrap; }
+.pf-chip span { font-size: 8.6px; letter-spacing: 0.03em; }

@@ -6,7 +6,6 @@ import { buttonControl } from './controls.js';
 const T = (path, label, hint, x = {}) => ({ type: 'toggle', path, label, hint, ...x });
 const G = (path, label, options, x = {}) => ({ type: 'seg', path, label, options, ...x });
 const X = (render) => ({ type: 'custom', render });
-const N = (text) => ({ type: 'note', text });
 
 const fmt = (n) => (n == null ? '—' : Number(n).toLocaleString());
 const when = (t) => {
@@ -166,19 +165,19 @@ export const PASS_TAB = {
   title: 'Survevr Pass',
   sub: 'Level, XP and daily quests read from the game’s own pass panel. Nothing is edited or unlocked by the extension.',
   cards: [
-    { title: 'Pass progress', rows: [X(progress)] },
+    { title: 'Pass', rows: [X(progress)] },
     { title: 'Daily quests', rows: [X(quests)] },
     {
       title: 'Auto claim',
       enable: 'cfg.pass.autoClaim',
       sub: 'When the game shows its “new item unlocked” window, press its own Confirm button for you.',
       rows: [
-        G('cfg.pass.claimMode', 'Confirm', [{ v: 'next', l: 'One at a time' }, { v: 'all', l: 'Confirm all' }]),
+        G('cfg.pass.claimMode', 'Confirm', [{ v: 'next', l: 'One at a time' }, { v: 'all', l: 'Confirm all' }], { advanced: true }),
         X(claimStatus),
-        N('That window only appears for items the server has already added to your account. Confirming just acknowledges them — the same as clicking the button yourself. Locked or unearned items cannot be claimed.'),
+        { type: 'note', advanced: true, text: 'That window only appears for items the server has already added to your account. Confirming just acknowledges them — the same as clicking the button yourself. Locked or unearned items cannot be claimed.' },
       ],
     },
-    { title: 'Claim history', rows: [X(claimHistory)] },
-    { title: 'XP history', rows: [T('cfg.pass.track', 'Record XP / level changes', 'Stored on this device only.'), X(xpHistory)] },
+    { title: 'Claim history', advanced: true, rows: [X(claimHistory)] },
+    { title: 'XP history', advanced: true, rows: [T('cfg.pass.track', 'Record XP / level changes', 'Stored on this device only.'), X(xpHistory)] },
   ],
 };

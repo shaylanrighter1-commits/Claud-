@@ -117,8 +117,8 @@ function sourceBanner(ctx) {
   if (!ctx.perf) return h('span');
   const m = ctx.perf.mode;
   const text =
-    m === 'live' ? 'Measuring this survev.io tab: real frames delivered by your browser while the game runs.'
-    : m === 'demo' ? 'Demo Arena: these numbers measure the simulator page, NOT survev.io. Open survev.io for real game performance.'
+    m === 'live' ? 'LIVE · real frames of this survev.io tab'
+    : m === 'demo' ? 'DEMO ARENA · simulator page, not survev.io performance'
     : 'Measuring this local development page.';
   return h('div', { class: 'pf-source ' + m }, text);
 }
@@ -129,16 +129,24 @@ function hero(ctx) {
     const pill = h('span', { class: 'pf-pill' });
     const sub1 = h('div', { class: 'pf-sub' });
     const sub2 = h('div', { class: 'pf-sub' });
-    const chips = ['Average', '1% low', 'Stutters/min', 'Display'].map((l) => {
+    const chips = ['Average', '1% low', 'Stutter/min', 'Display'].map((l) => {
       const b = h('b', { text: '—' });
       return { b, node: h('div', { class: 'pf-chip' }, b, h('span', { text: l })) };
     });
     const cv = h('canvas', { class: 'pf-graph', height: 96 });
-    const legend = h('div', { class: 'pf-legend' });
+    const legend = h('div', { class: 'pf-legend adv' });
+    const alert = h('div', { class: 'pf-warn scc-hidden' });
+    perf.environment().then(({ findings }) => {
+      const bad = findings.find((f) => f.level === 'bad') || findings.find((f) => f.level === 'warn');
+      if (bad) {
+        alert.textContent = bad.text;
+        alert.classList.remove('scc-hidden');
+      }
+    });
     const root = h('div', {},
       h('div', { class: 'pf-hero' }, h('div', { class: 'pf-big' }, fps, h('span', { class: 'pf-unit', text: 'FPS' })), h('div', { class: 'pf-side' }, pill, sub1, sub2)),
       h('div', { class: 'pf-chips' }, chips.map((c) => c.node)),
-      cv, legend);
+      cv, legend, alert);
     let lastDraw = 0;
     let L = null;
     const update = () => {
@@ -152,7 +160,7 @@ function hero(ctx) {
       chips[0].b.textContent = L.s ? f1(L.s.avgFps) : '—';
       chips[1].b.textContent = L.s ? f1(L.s.low1Fps) : '—';
       chips[2].b.textContent = L.s ? f1(L.s.stuttersPerMin) : '—';
-      chips[3].b.textContent = L.refresh ? `~${L.refresh} Hz` : '—';
+      chips[3].b.textContent = L.refresh ? `${L.refresh}Hz` : '—';
       const top = drawGraph(cv, L.ft, L);
       legend.textContent = `Frame time, last ${L.win} s · scale 0–${top} ms · dashed = ${(1000 / L.target.fps).toFixed(1)} ms budget · red = stutter`;
     };
@@ -204,50 +212,42 @@ function analytics(ctx) {
   });
 }
 
-// ------------------------------------------------------------------ presets
+// ------------------------------------------------------------------ presets (compact buttons; details are advanced)
 function presetCards(ctx) {
-  const wrap = h('div', { class: 'pf-presets' });
-  const result = h('div', { class: 'pf-result scc-hidden' });
   const perf = ctx.perf;
+  const row = h('div', { class: 'pf-pgrid' });
+  const details = h('div', { class: 'pf-presets adv' });
+  const result = h('div', { class: 'pf-result scc-hidden' });
 
   const render = () => {
-    wrap.textContent = '';
     const read = perf ? perf.settings.read() : null;
     const active = ctx.state.get('cfg.perf.preset');
+    row.textContent = '';
+    details.textContent = '';
     for (const id of PRESET_ORDER) {
       const p = PRESETS[id];
+      const b = h('button', { class: 'pf-pbtn' + (active === id ? ' on' : ''), type: 'button', dataset: { id }, disabled: !perf, title: p.blurb },
+        h('b', { text: p.label }), h('small', { text: { maxfps: 'Fastest', balanced: 'Stable', quality: 'Best look' }[id] }));
+      if (perf) b.addEventListener('click', () => showResult(perf.applyPreset(id)));
+      row.append(b);
       const items = h('ul', { class: 'pf-items' });
       for (const [sid, v] of Object.entries(p.game)) {
         const meta = GAME_SETTINGS.find((s) => s.id === sid);
         const r = read && read[sid];
-        let b;
-        if (!read) b = badge('GAME SETTING', 'info');
-        else if (!r.present) b = badge('NOT ON THIS PAGE', 'muted');
-        else if (r.checked === v) b = badge('ALREADY SET', 'muted');
-        else if (meta.applies === 'reload') b = badge('RELOADS PAGE', 'warn');
-        else b = badge('NEXT MATCH', 'info');
-        items.append(h('li', {}, h('span', { text: `${meta.label}: ${v ? 'on' : 'off'}` }), b));
+        let bd;
+        if (!read) bd = badge('GAME SETTING', 'info');
+        else if (!r.present) bd = badge('NOT ON THIS PAGE', 'muted');
+        else if (r.checked === v) bd = badge('ALREADY SET', 'muted');
+        else if (meta.applies === 'reload') bd = badge('RELOADS PAGE', 'warn');
+        else bd = badge('NEXT MATCH', 'info');
+        items.append(h('li', {}, h('span', { text: `${meta.label}: ${v ? 'on' : 'off'}` }), bd));
       }
-      const ov = p.overlay;
-      items.append(h('li', {}, h('span', { text: ov.liteUi ? 'Lightweight dashboard' : 'Full dashboard effects' }), badge('VERIFIED', 'ok')));
+      items.append(h('li', {}, h('span', { text: p.overlay.liteUi ? 'Lightweight dashboard' : 'Full dashboard effects' }), badge('VERIFIED', 'ok')));
       if (!perf || perf.mode !== 'live') {
+        const ov = p.overlay;
         items.append(h('li', {}, h('span', { text: ov.glow === 0 && !ov.cone ? 'Dev overlay effects: minimal' : ov.rays ? 'Dev overlay effects: full' : 'Dev overlay effects: reduced' }), badge('VERIFIED', 'ok')));
       }
-      const btn = perf
-        ? buttonControl({
-            text: active === id ? 'Re-apply' : 'Apply',
-            icon: 'bolt',
-            variant: active === id ? 'ghost' : 'primary',
-            onClick: () => showResult(perf.applyPreset(id)),
-          })
-        : null;
-      wrap.append(
-        h('div', { class: 'pf-preset' + (active === id ? ' on' : '') },
-          h('div', { class: 'pf-preset-h' }, h('b', { text: p.label }), active === id ? badge('ACTIVE', 'accent') : null),
-          h('p', { text: p.blurb }),
-          items,
-          btn)
-      );
+      details.append(h('div', { class: 'pf-preset' + (active === id ? ' on' : '') }, h('div', { class: 'pf-preset-h' }, h('b', { text: p.label })), h('p', { text: p.blurb }), items));
     }
   };
 
@@ -255,106 +255,86 @@ function presetCards(ctx) {
     result.textContent = '';
     result.classList.remove('scc-hidden');
     const changed = res.changes.filter((c) => c.status !== 'missing');
-    const title = res.kind === 'restore' ? 'Restored original settings' : `${PRESETS[res.preset].label} applied`;
-    result.append(h('b', { text: title }));
-    if (!changed.length && !res.pending.length) result.append(h('div', { class: 'scc-hint', text: 'Nothing needed to change — everything already matched.' }));
+    result.append(h('b', { text: res.kind === 'restore' ? 'Original settings restored' : `${PRESETS[res.preset].label} applied` }));
+    if (!changed.length && !res.pending.length) result.append(h('div', { class: 'scc-hint', text: 'Everything already matched.' }));
     for (const c of changed) result.append(h('div', { class: 'pf-change', text: describeChange(c) }));
     const missing = res.changes.filter((c) => c.status === 'missing');
-    if (missing.length) result.append(h('div', { class: 'scc-hint', text: `Not available on this page: ${missing.map((m) => m.label).join(', ')}.` }));
+    if (missing.length) result.append(h('div', { class: 'scc-hint', text: `Not on this page: ${missing.map((m) => m.label).join(', ')}.` }));
     if (res.pending.length) {
-      result.append(h('div', { class: 'pf-warn', text: 'High-resolution textures can only change when the game reloads the page (that is how the game itself applies it). Do this between matches — reloading leaves a match in progress.' }));
+      result.append(h('div', { class: 'pf-warn', text: 'High-res textures change only when the game reloads the page. Do it between matches.' }));
       result.append(buttonControl({ text: 'Apply & reload now', icon: 'refresh', variant: 'danger', onClick: () => perf.applyPending() }));
     }
   };
 
-  if (perf) {
-    ctx.disposers.push(perf.bus.on('settings', render));
-  }
+  if (perf) ctx.disposers.push(perf.bus.on('settings', render));
   ctx.watch('cfg.perf.preset', render);
   render();
-  return h('div', {}, perf ? null : h('p', { class: 'scc-note', text: 'Presets are applied on the game page (in-page dashboard). Shown here for reference.' }), wrap, result, perf ? h('div', {}, restoreRow(ctx, showResult)) : null);
+  const restore = perf
+    ? buttonControl({
+        text: 'Restore original settings', icon: 'refresh', variant: 'ghost',
+        onClick: () => {
+          if (!ctx.state.get('loc.perf.original')) return ctx.toast('Nothing to restore — no preset has changed anything yet');
+          const r = perf.restoreOriginal();
+          showResult({ kind: 'restore', changes: [], pending: r.pending });
+          ctx.toast(`Restored ${r.restored} setting${r.restored === 1 ? '' : 's'}`);
+        },
+      })
+    : h('p', { class: 'scc-note', text: 'Presets apply on the survev.io page.' });
+  return h('div', {}, row, result, restore, details);
 }
 
-function restoreRow(ctx, showResult) {
-  const perf = ctx.perf;
-  const btn = buttonControl({
-    text: 'Restore original settings', icon: 'refresh', variant: 'ghost',
-    onClick: () => {
-      if (!ctx.state.get('loc.perf.original')) return ctx.toast('Nothing to restore — no preset has changed anything yet');
-      const r = perf.restoreOriginal();
-      showResult({ kind: 'restore', changes: [], pending: r.pending });
-      ctx.toast(`Restored ${r.restored} setting${r.restored === 1 ? '' : 's'}`);
-    },
-  });
-  return btn;
-}
-
-// ------------------------------------------------------------------ game settings
+// ------------------------------------------------------------------ game settings (switches mirror the game's checkboxes)
 function gameSettings(ctx) {
   return needPerf(ctx, (perf) => {
-    const head = h('div', {});
     const list = h('div', { class: 'pf-gs' });
-    const tier = h('div', { class: 'scc-hint' });
+    const tier = h('div', { class: 'scc-hint adv' });
     const armed = {};
     const render = () => {
       const read = perf.settings.read();
       const tests = ctx.state.get('loc.perf.settingTests') || {};
-      const any = Object.values(read).some((r) => r.present);
-      head.textContent = '';
-      head.append(
-        h('div', { class: 'pf-detect ' + (any ? 'ok' : '') },
-          h('span', { class: 'scc-dot ' + (any ? 'green' : 'muted') }),
-          h('span', { text: any ? 'Game settings controls detected on this page' : 'No game settings controls on this page' }))
-      );
-      if (!any) head.append(h('div', { class: 'scc-hint', text: 'Looking for #highResTex, #interpolation, #localRotation, #screenShake. Presets only adjust Control Center effects here.' }));
       list.textContent = '';
+      if (!Object.values(read).some((r) => r.present)) {
+        list.append(h('p', { class: 'scc-note', text: perf.mode === 'demo' ? 'The Demo Arena has no game settings. Open survev.io to use them.' : 'The game’s settings controls were not found on this page.' }));
+        return;
+      }
       for (const meta of GAME_SETTINGS) {
         const r = read[meta.id];
+        if (!r.present) continue;
+        const sw = h('button', { class: 'scc-switch' + (r.checked ? ' on' : ''), type: 'button', role: 'switch', 'aria-checked': String(r.checked), 'aria-label': meta.label, disabled: r.disabled }, h('span', { class: 'scc-knob' }));
+        const label = h('div', { class: 'scc-label', text: meta.label });
+        const hint = h('div', { class: 'scc-hint', text: meta.applies === 'reload' ? 'Game reloads the page to apply' : 'Applies from the next match' });
+        sw.addEventListener('click', () => {
+          if (meta.applies === 'reload' && !armed[meta.id]) {
+            armed[meta.id] = setTimeout(() => {
+              armed[meta.id] = 0;
+              render();
+            }, 4000);
+            hint.textContent = 'Tap again to reload the page and apply';
+            hint.classList.add('warn');
+            return;
+          }
+          clearTimeout(armed[meta.id]);
+          armed[meta.id] = 0;
+          const res = perf.setGameSetting(meta.id, !r.checked);
+          if (res === 'changed' && meta.applies === 'next-match') ctx.toast(`${meta.label} ${!r.checked ? 'on' : 'off'} — next match`);
+          render();
+        });
         const t = tests[meta.id];
-        let measured;
+        const detail = h('div', { class: 'pf-gs-detail adv' }, h('div', { class: 'scc-hint', text: meta.note }));
         if (t) {
-          const txt = t.verdict === 'improved' ? `Measured on this device: +${t.pct.toFixed(0)}% avg FPS with it ${t.to ? 'on' : 'off'}` : t.verdict === 'worse' ? `Measured: ${t.pct.toFixed(0)}% avg FPS with it ${t.to ? 'on' : 'off'}` : `Measured: no significant FPS change`;
-          measured = h('div', { class: 'pf-measured ' + (t.verdict === 'improved' ? 'ok' : t.verdict === 'worse' ? 'bad' : '') }, txt, t.combined ? ' (changed together with other settings)' : '', ` · p=${t.p.toFixed(3)}`);
-        } else measured = h('div', { class: 'pf-measured', text: meta.impact === 'gpu' ? 'Requires testing: run a before/after benchmark around this change.' : 'Not expected to change FPS (code analysis). Untested on this device.' });
-        const state = r.present ? badge(r.checked ? 'ON' : 'OFF', r.checked ? 'accent' : 'muted') : badge('NOT DETECTED', 'muted');
-        let btn = null;
-        if (r.present) {
-          btn = h('button', { class: 'scc-btn ghost pf-tgl', type: 'button', text: r.checked ? 'Turn off' : 'Turn on', disabled: r.disabled });
-          btn.addEventListener('click', () => {
-            if (meta.applies === 'reload' && !armed[meta.id]) {
-              armed[meta.id] = setTimeout(() => {
-                armed[meta.id] = 0;
-                render();
-              }, 4000);
-              btn.textContent = 'Reloads page — confirm';
-              btn.classList.add('danger');
-              return;
-            }
-            clearTimeout(armed[meta.id]);
-            armed[meta.id] = 0;
-            const res = perf.setGameSetting(meta.id, !r.checked);
-            if (res === 'changed' && meta.applies === 'next-match') ctx.toast(`${meta.label} ${!r.checked ? 'on' : 'off'} — takes effect next match`);
-            render();
-          });
-        }
-        list.append(
-          h('div', { class: 'pf-gs-row' },
-            h('div', { class: 'pf-gs-top' }, h('b', { text: meta.label }), state, badge(APPLIES_TEXT[meta.applies], meta.applies === 'reload' ? 'warn' : 'info')),
-            h('div', { class: 'scc-hint', text: meta.note }),
-            measured,
-            btn)
-        );
+          const txt = t.verdict === 'improved' ? `Measured: +${t.pct.toFixed(0)}% avg FPS with it ${t.to ? 'on' : 'off'}` : t.verdict === 'worse' ? `Measured: ${t.pct.toFixed(0)}% avg FPS with it ${t.to ? 'on' : 'off'}` : 'Measured: no significant FPS change';
+          detail.append(h('div', { class: 'pf-measured ' + (t.verdict === 'improved' ? 'ok' : t.verdict === 'worse' ? 'bad' : '') }, txt, ` · p=${t.p.toFixed(3)}`));
+        } else if (meta.impact === 'gpu') detail.append(h('div', { class: 'pf-measured', text: 'Requires testing on your Mac: use Before/After benchmark around this change.' }));
+        list.append(h('div', { class: 'pf-gs-row' }, h('div', { class: 'pf-gs-top' }, h('div', { class: 'scc-row-text' }, label, hint), sw), detail));
       }
     };
     perf.environment().then(({ tier: t }) => {
-      tier.textContent = t.canUseHigh
-        ? 'High-res textures can take effect on this device (screen, WebGL and GPU texture size qualify).'
-        : `High-res textures have NO effect on this device — the game forces low-res because ${t.reasons.join('; ')}.`;
+      tier.textContent = t.canUseHigh ? 'High-res textures can take effect on this device.' : `High-res textures have no effect here — the game forces low-res because ${t.reasons.join('; ')}.`;
     });
     ctx.disposers.push(perf.bus.on('settings', render));
     ctx.watch('loc.perf.settingTests', render);
     render();
-    return h('div', {}, head, tier, list, h('p', { class: 'scc-note', text: 'Changes go through the game’s own checkboxes (same as clicking them in its settings menu). Nothing else in the game is modified.' }));
+    return h('div', {}, list, tier, h('p', { class: 'scc-note adv', text: 'Switches click the game’s own checkboxes — the same as using its settings menu. Interpolation and local rotation cost no FPS; turning interpolation off makes movement choppier.' }));
   });
 }
 
@@ -611,42 +591,47 @@ export const PERF_TAB = {
   title: 'Performance Boost',
   sub: 'Measure real frame pacing, apply supported settings, and verify the result with before/after benchmarks.',
   cards: [
-    { title: 'Live performance', enable: 'cfg.perf.monitor', rows: [X(sourceBanner), X(hero)] },
+    { title: 'Live FPS', enable: 'cfg.perf.monitor', rows: [X(sourceBanner), X(hero)] },
+    { title: 'Graphics preset', rows: [X(presetCards)] },
+    { title: 'Game settings', rows: [X(gameSettings)] },
     {
       title: 'Frame-time analytics',
+      advanced: true,
       sub: 'Measured from the browser’s actual frame cadence on this page (requestAnimationFrame timestamps + Long Animation Frames API).',
       rows: [G('cfg.perf.window', 'Measurement window', [{ v: 5, l: '5 s' }, { v: 10, l: '10 s' }, { v: 30, l: '30 s' }]), X(analytics)],
     },
-    { title: 'Graphics presets', sub: 'Only settings the game actually exposes are changed. Unsupported items are labelled.', rows: [X(presetCards)] },
-    { title: 'Game settings', sub: 'The game’s own controls, with what each one really does (from the client code).', rows: [X(gameSettings)] },
     {
       title: 'Auto optimize',
+      advanced: true,
       enable: 'cfg.perf.autoOptimize',
       sub: 'Steps down one preset only after sustained low FPS (7 of 10 s below 90% of target), waits 30 s between changes, never steps back up by itself, and never reloads the page.',
       rows: [G('cfg.perf.targetFps', 'Target FPS', [{ v: 30, l: '30' }, { v: 60, l: '60' }, { v: 120, l: '120' }, { v: 144, l: '144' }]), X(autoStatus)],
     },
     {
       title: 'Before / after benchmark',
+      advanced: true,
       sub: 'Same-length windows of real frames. A change is only reported when Welch’s t-test on per-second FPS is significant and ≥ 3%.',
       rows: [G('cfg.perf.benchSeconds', 'Window', [{ v: 10, l: '10 s' }, { v: 15, l: '15 s' }, { v: 30, l: '30 s' }]), X(benchmark)],
     },
     {
       title: 'Network diagnostics',
+      advanced: true,
       sub: 'Observation only. Values are never estimated or invented — missing data is shown as “—”.',
       rows: [
         X(network),
-        T('cfg.perf.net.probe', 'Latency probe', 'Off by default. Requires an endpoint on the game page’s own origin.'),
+        T('cfg.perf.net.probe', 'Latency probe', 'Off by default. Requires an endpoint on the game page’s own origin (private dev pages only).'),
         X(endpointInput),
         S('cfg.perf.net.intervalSec', 'Probe interval', 2, 30, 1, ' s'),
       ],
     },
-    { title: 'Environment checks', sub: 'Common system causes of low FPS in browser games.', rows: [X(environment)] },
+    { title: 'Environment checks', advanced: true, sub: 'Common system causes of low FPS in browser games.', rows: [X(environment)] },
     {
       title: 'Dashboard & defaults',
+      advanced: true,
       rows: [
         T('cfg.perf.liteUi', 'Lightweight dashboard', 'Removes blur, shadows and animations from this panel. Background blur over a moving game canvas costs GPU time every frame.'),
-        T('cfg.perf.autoAttach', 'Open on local game pages', 'Show the dashboard automatically on localhost pages that contain the game canvas (#cvs). On survev.io it always loads; minimize or hide it with ⌥D.'),
-        N('While the dashboard is minimized or on another tab, live widgets stop updating. The overlay canvas is hidden whenever it has nothing to draw.'),
+        T('cfg.perf.autoAttach', 'Open on local game pages', 'Show the dashboard automatically on localhost pages with the game canvas (#cvs). On survev.io it always loads.'),
+        N('While the dashboard is minimized or on another tab, live widgets stop updating.'),
         X(restoreDefaults),
       ],
     },

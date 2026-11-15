@@ -2,8 +2,8 @@
 // in-page overlay; embedded (fills its container) in the toolbar popup.
 
 import { h, Bus } from '../core/util.js';
-import { THEMES } from '../core/defaults.js';
-import { LOGO, icon } from './icons.js';
+import { THEMES, VERSION } from '../core/defaults.js';
+import { logo, icon } from './icons.js';
 import { buildControl } from './controls.js';
 import { ALL_TABS, TAB_SETS } from './tabs.js';
 
@@ -64,7 +64,7 @@ export class Dashboard {
     const minBtn = floating ? h('button', { class: 'scc-iconbtn', type: 'button', title: 'Minimize', 'aria-label': 'Minimize', html: icon('minus', 17) }) : null;
     if (minBtn) minBtn.addEventListener('click', () => state.set('loc.ui.minimized', true));
     this.header = h('header', { class: 'scc-head' },
-      h('div', { class: 'scc-logo', html: LOGO }),
+      h('div', { class: 'scc-logo', html: logo() }),
       h('div', { class: 'scc-brand' },
         h('div', { class: 'scc-title' }, 'SURVEV.IO', h('i', { text: '|' }), h('span', { text: 'CONTROL CENTER' })),
         h('div', { class: 'scc-sub' }, this.statusDot, this.statusText)),
@@ -96,8 +96,8 @@ export class Dashboard {
     this.panel.append(this.toastEl);
 
     // ---- minimized pill
-    this.pill = h('button', { class: 'scc-pill', type: 'button', title: 'Expand Control Center', 'aria-label': 'Expand Control Center' },
-      h('span', { class: 'scc-logo sm', html: LOGO }), h('span', { class: 'scc-pill-t', text: 'CONTROL CENTER' }), h('span', { class: 'scc-dot pill-dot' }));
+    this.pill = h('button', { class: 'scc-pill', type: 'button', title: `SURVEV.IO | CONTROL CENTER v${VERSION} — click to expand, drag to move`, 'aria-label': 'Expand Control Center' },
+      h('span', { class: 'scc-logo sm', html: logo() }), h('span', { class: 'scc-dot pill-dot' }));
 
     this.float.append(this.panel, this.pill);
     this.root.append(this.float);
@@ -138,6 +138,14 @@ export class Dashboard {
     const page = h('section', { class: 'scc-page', role: 'tabpanel', 'aria-labelledby': `scc-tab-${tab.id}` },
       h('div', { class: 'scc-page-head' }, h('h2', { text: tab.title }), h('p', { text: tab.sub })));
     for (const card of tab.cards) page.append(this.buildCard(card));
+    if (tab.cards.some((c) => c.advanced) || tab.id === 'settings') {
+      const more = h('button', { class: 'scc-more', type: 'button' });
+      more.addEventListener('click', () => this.state.toggle('loc.ui.advanced'));
+      const upd = () => (more.textContent = this.state.get('loc.ui.advanced') ? 'Hide advanced settings' : 'Show advanced settings');
+      this.ctx.watch('loc.ui.advanced', upd);
+      upd();
+      page.append(more);
+    }
     return page;
   }
 
@@ -150,7 +158,7 @@ export class Dashboard {
     const titleBtn = h('button', { class: 'scc-card-t', type: 'button', 'aria-expanded': 'true' },
       h('span', { class: 'scc-card-tt' }, h('b', { text: card.title }), card.sub ? h('small', { text: card.sub }) : null), chev);
     const head = h('div', { class: 'scc-card-h' }, titleBtn);
-    const el = h('div', { class: 'scc-card' }, head, collapse);
+    const el = h('div', { class: 'scc-card' + (card.advanced ? ' adv' : '') }, head, collapse);
     titleBtn.addEventListener('click', () => {
       const closed = el.classList.toggle('closed');
       titleBtn.setAttribute('aria-expanded', String(!closed));
@@ -245,6 +253,7 @@ export class Dashboard {
     this.indicator.style.transform = `translateX(${idx * 100}%)`;
     this.indicator.style.width = `${100 / this.tabBtns.size}%`;
     this.root.dataset.master = loc.master ? 'on' : 'off';
+    this.root.classList.toggle('simple', !loc.ui.advanced);
     const st = this.app ? this.app.getStatus() : null;
     const label = this.label || (st ? (st.mode === 'dev' ? MODE_TEXT.dev : MODE_TEXT[st.mode] || st.label) : MODE_TEXT.popup);
     this.statusText.textContent = `${label} · ${loc.master ? 'ACTIVE' : 'MASTER OFF'}`;

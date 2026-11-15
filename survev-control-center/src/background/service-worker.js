@@ -19,7 +19,26 @@ async function updateBadge() {
   }
 }
 
-chrome.runtime.onInstalled.addListener(updateBadge);
+/**
+ * Content scripts are only injected into pages loaded AFTER install/update. Inject into survev.io tabs that are
+ * already open so the dashboard appears without a manual reload.
+ */
+async function injectIntoOpenTabs() {
+  try {
+    const tabs = await chrome.tabs.query({ url: 'https://survev.io/*' });
+    for (const t of tabs) {
+      if (t.id == null || t.discarded) continue;
+      await chrome.scripting.executeScript({ target: { tabId: t.id }, files: ['src/content/loader.js'] }).catch(() => {});
+    }
+  } catch (e) {
+    console.warn('[SCC] could not inject into open tabs', e);
+  }
+}
+
+chrome.runtime.onInstalled.addListener((details) => {
+  updateBadge();
+  if (details.reason === 'install' || details.reason === 'update') injectIntoOpenTabs();
+});
 chrome.runtime.onStartup.addListener(updateBadge);
 chrome.storage.onChanged.addListener((changes, area) => {
   if (area === 'local' && changes[LOCAL_KEY]) updateBadge();

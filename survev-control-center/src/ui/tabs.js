@@ -168,7 +168,7 @@ export const TABS = [
         ],
       },
       {
-        title: 'Target selection',
+        title: 'Target selection', advanced: true,
         rows: [
           G('cfg.aiming.targetMode', 'Priority', [{ v: 'crosshair', l: 'Crosshair' }, { v: 'distance', l: 'Distance' }, { v: 'health', l: 'Health' }, { v: 'threat', l: 'Threat' }]),
           T('cfg.aiming.enemiesOnly', 'Enemies only', 'Allies and neutrals are shown as rejected candidates.'),
@@ -178,7 +178,7 @@ export const TABS = [
         ],
       },
       {
-        title: 'Projectile prediction',
+        title: 'Projectile prediction', advanced: true,
         enable: 'cfg.aiming.prediction.enabled',
         sub: 'Solves the interception point for a moving target and the weapon’s bullet speed.',
         rows: [
@@ -191,7 +191,7 @@ export const TABS = [
         ],
       },
       {
-        title: 'Trajectory',
+        title: 'Trajectory', advanced: true,
         rows: [
           T('cfg.aiming.showTrajectory', 'Aim trajectory line'),
           T('cfg.aiming.showSpread', 'Weapon spread cone'),
@@ -263,7 +263,7 @@ export const TABS = [
         ],
       },
       {
-        title: 'Team colours',
+        title: 'Team colours', advanced: true,
         enable: 'cfg.entities.teams.enabled',
         rows: [
           G('cfg.entities.teams.mode', 'Colour by', [{ v: 'relation', l: 'Relation' }, { v: 'team', l: 'Per team' }]),
@@ -275,7 +275,7 @@ export const TABS = [
         ],
       },
       {
-        title: 'Loot markers',
+        title: 'Loot markers', advanced: true,
         enable: 'cfg.entities.loot.show',
         rows: [
           G('cfg.entities.loot.minRarity', 'Minimum rarity', [{ v: 0, l: 'All' }, { v: 1, l: 'Uncommon+' }, { v: 2, l: 'Rare+' }, { v: 3, l: 'Epic+' }]),
@@ -284,7 +284,7 @@ export const TABS = [
         ],
       },
       {
-        title: 'Off-screen indicators',
+        title: 'Off-screen indicators', advanced: true,
         enable: 'cfg.entities.offscreen.show',
         rows: [
           S('cfg.entities.offscreen.size', 'Arrow size', 8, 28, 1, ' px'),
@@ -293,7 +293,7 @@ export const TABS = [
           T('cfg.entities.offscreen.labels', 'Distance chips'),
         ],
       },
-      { title: 'Connector lines', rows: [T('cfg.entities.lines.show', 'Lines from you to each entity', 'Fade with distance.')] },
+      { title: 'Connector lines', advanced: true, rows: [T('cfg.entities.lines.show', 'Lines from you to each entity', 'Fade with distance.')] },
     ],
   },
 
@@ -316,7 +316,7 @@ export const TABS = [
         ],
       },
       {
-        title: 'Wall occlusion diagnostics',
+        title: 'Wall occlusion diagnostics', advanced: true,
         enable: 'cfg.visibility.occlusion.show',
         rows: [
           T('cfg.visibility.occlusion.highlight', 'Highlight occluding obstacles'),
@@ -338,7 +338,7 @@ export const TABS = [
         ],
       },
       {
-        title: 'Obstacle rendering',
+        title: 'Obstacle rendering', advanced: true,
         rows: [
           S('cfg.visibility.wallAlpha', 'Obstacle opacity', 10, 100, 1, '%', { hint: 'Lower to see entities through level geometry in the demo view.' }),
           T('cfg.visibility.obstacleGhost', 'Obstacle ghosts on dev pages', 'Draws the obstacles your dev API reports as translucent shapes.'),
@@ -346,7 +346,7 @@ export const TABS = [
         ],
       },
       {
-        title: 'Collision debugging',
+        title: 'Collision debugging', advanced: true,
         rows: [
           T('cfg.visibility.collisions.hitboxes', 'Obstacle hitboxes', 'Blue = blocks movement · orange = blocks bullets · green = blocks sight · dashed = does not block sight.'),
           T('cfg.visibility.collisions.players', 'Player hit circles'),
@@ -591,6 +591,10 @@ function devCard(ctx) {
   );
 }
 
+function versionNote() {
+  return h('p', { class: 'scc-note', text: `Version ${VERSION}` });
+}
+
 function resetCard(ctx) {
   let armed = 0;
   const btn = buttonControl({
@@ -623,9 +627,18 @@ export const SETTINGS_TAB = {
   title: 'Settings',
   sub: 'Master switch, shortcuts, theme, saved configurations and the developer session.',
   cards: [
-    { title: 'Power', rows: [X(masterRow), X(presetChips), T('cfg.hud.show', 'Status HUD on canvas', 'Small FPS / mode chip in the bottom-left of the view.')] },
     {
-      title: 'Keyboard shortcuts',
+      title: 'General',
+      rows: [
+        X(masterRow),
+        T('loc.ui.advanced', 'Show advanced settings', 'Analytics, benchmarks, auto optimize, histories, shortcuts, theme, saved configurations.'),
+        { type: 'custom', advanced: true, render: presetChips },
+        T('cfg.hud.show', 'Status HUD on canvas', 'Small FPS / mode chip in the bottom-left of the dev overlay.', { advanced: true }),
+        { type: 'custom', render: versionNote },
+      ],
+    },
+    {
+      title: 'Keyboard shortcuts', advanced: true,
       sub: 'Work inside the Demo Arena and on connected dev pages. Click a shortcut, then press the new keys.',
       rows: [
         K('cfg.shortcuts.master', 'Master ON / OFF', { conflicts: SHORTCUT_PATHS }),
@@ -636,7 +649,7 @@ export const SETTINGS_TAB = {
       ],
     },
     {
-      title: 'Theme',
+      title: 'Theme', advanced: true,
       rows: [
         X(themeSwatches),
         S('cfg.theme.radius', 'Corner radius', 6, 22, 1, ' px'),
@@ -645,9 +658,9 @@ export const SETTINGS_TAB = {
         T('cfg.theme.motion', 'Animations'),
       ],
     },
-    { title: 'Saved configurations', rows: [X(profilesCard)] },
-    { title: 'Developer authorization', sub: 'Server-authorized development sessions only.', rows: [X(devCard)] },
-    { title: 'Reset', rows: [X(resetCard)] },
+    { title: 'Saved configurations', advanced: true, rows: [X(profilesCard)] },
+    { title: 'Developer authorization', advanced: true, sub: 'Server-authorized development sessions only.', rows: [X(devCard)] },
+    { title: 'Reset', advanced: true, rows: [X(resetCard)] },
   ],
 };
 

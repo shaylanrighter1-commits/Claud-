@@ -54,20 +54,47 @@ const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
   if (!REAL) check('no developer-API handshake sent to the live site', (await page.evaluate(() => window.__devHello)) === 0);
   await page.screenshot({ path: path.join(shots, 'live-01-perf.png') });
 
+  // ---------------------------------------------------------------- compact / simple UI
+  const ui = await page.evaluate(() => {
+    const r = document.getElementById('scc-overlay-host').shadowRoot;
+    const page = r.querySelector('.scc-page.on');
+    const vis = [...page.querySelectorAll('.scc-card')].filter((c) => getComputedStyle(c).display !== 'none').map((c) => c.querySelector('.scc-card-tt b').textContent);
+    return { width: Math.round(r.querySelector('.scc-float').getBoundingClientRect().width), visible: vis, simple: r.querySelector('.scc-root').classList.contains('simple') };
+  });
+  check('simple mode by default (advanced settings hidden)', ui.simple && ui.visible.length === 3, ui.visible.join(' · '));
+  check('compact panel', ui.width <= 350, `${ui.width}px wide`);
+  await page.click('.scc-head-actions .scc-iconbtn:last-child');
+  await sleep(300);
+  const pill = await page.locator('.scc-pill').boundingBox();
+  check('minimizes to a small round icon', !!pill && pill.width <= 50 && pill.height <= 50, pill && `${Math.round(pill.width)}×${Math.round(pill.height)}px`);
+  await page.screenshot({ path: path.join(shots, 'live-00-minimized.png') });
+  await page.click('.scc-pill');
+  await sleep(300);
+  check('expands again from the icon', await page.locator('.scc-panel').isVisible());
+
+  // re-injection into an already-open tab (what happens on install/update) must not create a second dashboard
+  const injected = await sw.evaluate(async () => {
+    const tabs = await chrome.tabs.query({ url: 'https://survev.io/*' });
+    await chrome.scripting.executeScript({ target: { tabId: tabs[0].id }, files: ['src/content/loader.js'] });
+    return tabs.length;
+  });
+  await sleep(1500);
+  check('extension can inject into open survev.io tabs, without duplicates', injected >= 1 && (await page.evaluate(() => document.querySelectorAll('#scc-overlay-host').length)) === 1);
+
   // ---------------------------------------------------------------- performance
   await page.click('#scc-tab-perf');
   await sleep(1500);
   const fps = await page.locator('.pf-fps').textContent();
   check('real frame-rate measured on the site', /^\d+$/.test(fps) && Number(fps) > 5, `${fps} FPS`);
   check('measurement source labelled as survev.io', /survev\.io tab/.test(await page.locator('.pf-source').textContent()));
-  const detect = await page.locator('.pf-detect').first().textContent();
-  check('game settings controls detected', /detected on this page/.test(detect), detect);
+  const gsRows = await page.locator('.scc-page.on .pf-gs-row').allTextContents();
+  check('all four game settings shown as switches', gsRows.length === 4, gsRows.map((t) => t.split('Game')[0].split('Applies')[0].trim()).join(' · '));
   const presetText = await page.locator('.pf-presets').textContent();
   check('presets do not offer dev-overlay effects on the live site', !/Dev overlay/.test(presetText));
 
   if (!REAL) {
     const g0 = await page.evaluate(() => ({ shake: document.getElementById('screenShake').checked, hi: document.getElementById('highResTex').checked, interp: document.getElementById('interpolation').checked }));
-    await page.locator('.pf-preset').first().locator('.scc-btn').click(); // MAX FPS
+    await page.click('.pf-pbtn[data-id="maxfps"]'); // MAX FPS
     await sleep(300);
     const g1 = await page.evaluate(() => ({ shake: document.getElementById('screenShake').checked, hi: document.getElementById('highResTex').checked, interp: document.getElementById('interpolation').checked }));
     check('MAX FPS: screen shake off via the game checkbox', g0.shake === true && g1.shake === false);
@@ -78,11 +105,13 @@ const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
     await sleep(2000);
     check('after consented reload: high-res textures off (persisted by the page)', await page.evaluate(() => document.getElementById('highResTex').checked === false));
 
-    // before/after benchmark through the UI
+    // before/after benchmark through the UI (an advanced feature)
     await sw.evaluate(async () => {
       const c = (await chrome.storage.local.get('scc.config'))['scc.config'];
       c.perf.benchSeconds = 10;
-      await chrome.storage.local.set({ 'scc.config': c });
+      const l = (await chrome.storage.local.get('scc.local'))['scc.local'];
+      l.ui.advanced = true;
+      await chrome.storage.local.set({ 'scc.config': c, 'scc.local': l });
     });
     await page.click('#scc-tab-perf');
     await sleep(500);
@@ -106,6 +135,22 @@ const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
     await page.waitForSelector('#scc-overlay-host', { state: 'attached' });
     await sleep(2000);
     check('restore original: high-res textures back on after reload', await page.evaluate(() => document.getElementById('highResTex').checked === true));
+    await sw.evaluate(async () => {
+      const l = (await chrome.storage.local.get('scc.local'))['scc.local'];
+      l.ui.advanced = false;
+      await chrome.storage.local.set({ 'scc.local': l });
+    });
+  }
+
+  if (!REAL) {
+    const shake0 = await page.evaluate(() => document.getElementById('screenShake').checked);
+    await page.click('#scc-tab-perf');
+    await page.locator('.scc-page.on .pf-gs-row', { hasText: 'Screen shake' }).locator('.scc-switch').click();
+    await sleep(200);
+    const shake1 = await page.evaluate(() => document.getElementById('screenShake').checked);
+    check('game-setting switch toggles the game’s own checkbox', shake1 === !shake0);
+    await page.locator('.scc-page.on .pf-gs-row', { hasText: 'Screen shake' }).locator('.scc-switch').click();
+    await sleep(200);
   }
 
   // ---------------------------------------------------------------- input isolation
@@ -190,7 +235,8 @@ const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
   await pop.goto(`chrome-extension://${extId}/src/popup/popup.html`);
   await pop.waitForSelector('.scc-panel');
   await sleep(500);
-  check('popup offers all six tabs', (await pop.locator('.scc-tab').count()) === 6);
+  check('popup is simple by default (Boost, Pass, Settings)', (await pop.locator('.scc-tab').count()) === 3);
+  check('popup shows status line with version', /v1\.3\.0/.test(await pop.locator('#status').textContent()));
   await pop.screenshot({ path: path.join(shots, 'live-06-popup.png') });
 
   // The real site may log its own errors (e.g. blocked API/ad requests in a sandbox); only ours count here.

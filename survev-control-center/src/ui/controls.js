@@ -174,6 +174,7 @@ export function buildControl(spec, ctx) {
     default:
       node = h('div');
   }
+  if (spec.advanced) node.classList.add('adv');
   if (spec.showIf) {
     const upd = () => node.classList.toggle('scc-hidden', !spec.showIf(ctx.state));
     ctx.watch('', upd);

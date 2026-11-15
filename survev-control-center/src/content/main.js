@@ -22,7 +22,30 @@ async function loadCss() {
   }
 }
 
+/** Remove dashboards left behind by a previous (reloaded/updated) copy of the extension. */
+function removeStaleHosts() {
+  for (const el of document.querySelectorAll('#scc-overlay-host')) el.remove();
+}
+
+/** When the extension is reloaded/updated, this copy's context dies; clean up instead of lingering. */
+function watchContext(teardown) {
+  const iv = setInterval(() => {
+    let alive = false;
+    try {
+      alive = !!(chrome.runtime && chrome.runtime.id);
+    } catch (_) {
+      alive = false;
+    }
+    if (!alive) {
+      clearInterval(iv);
+      teardown();
+    }
+  }, 2000);
+  return () => clearInterval(iv);
+}
+
 function makeHost(css) {
+  removeStaleHosts();
   const host = document.createElement('div');
   host.id = 'scc-overlay-host';
   // The host never takes pointer events itself; only the panel / pill inside it do.
@@ -143,6 +166,7 @@ export async function boot() {
   // open the dashboard so the Performance Boost tab is available without the dev API.
   if (state.data.cfg.perf.autoAttach && document.getElementById('cvs')) mount();
   window.addEventListener('pagehide', teardown, { once: true });
+  watchContext(teardown);
 }
 
 // ---------------------------------------------------------------- live site (survev.io)
@@ -182,7 +206,7 @@ async function bootLive() {
 
   function onMessage(msg, _sender, send) {
     if (!msg || typeof msg.type !== 'string') return;
-    if (msg.type === 'scc:status') send({ ok: true, status: { phase: 'live', host: location.host, mounted: true } });
+    if (msg.type === 'scc:status') send({ ok: true, status: { phase: 'live', host: location.host, mounted: true, hidden: state.data.loc.ui.hidden, version: chrome.runtime.getManifest().version } });
     else if (msg.type === 'scc:attach') {
       state.set('loc.ui.hidden', false);
       state.set('loc.ui.minimized', false);
@@ -195,9 +219,11 @@ async function bootLive() {
   chrome.runtime.onMessage.addListener(onMessage);
 
   let dead = false;
+  let stopWatch = () => {};
   function teardown() {
     if (dead) return;
     dead = true;
+    stopWatch();
     window.removeEventListener('keydown', onKey, true);
     try {
       chrome.runtime.onMessage.removeListener(onMessage);
@@ -216,4 +242,5 @@ async function bootLive() {
     window.__sccBooted = false;
   }
   window.addEventListener('pagehide', teardown, { once: true });
+  stopWatch = watchContext(teardown);
 }

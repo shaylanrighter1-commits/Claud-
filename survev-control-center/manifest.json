@@ -2,7 +2,7 @@
   "manifest_version": 3,
   "name": "SURVEV.IO | CONTROL CENTER",
   "short_name": "SCC Dev Tools",
-  "version": "1.2.0",
+  "version": "1.3.0",
   "description": "Performance Boost and Survevr Pass tools for survev.io, plus a developer visualization suite (demo arena, replays, private dev sessions). Developer modules never run on the live site.",
   "minimum_chrome_version": "111",
   "icons": {
@@ -25,7 +25,8 @@
   },
   "permissions": [
     "storage",
-    "activeTab"
+    "activeTab",
+    "scripting"
   ],
   "content_scripts": [
     {
@@ -75,5 +76,8 @@
       },
       "description": "Show / hide the dashboard"
     }
-  }
+  },
+  "host_permissions": [
+    "https://survev.io/*"
+  ]
 }

@@ -34,10 +34,15 @@ export function icon(name, size = 18) {
   return `<svg class="scc-i" width="${size}" height="${size}" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">${P[name] || ''}</svg>`;
 }
 
-export const LOGO = `<svg viewBox="0 0 32 32" width="30" height="30" aria-hidden="true">
-  <defs><linearGradient id="sccg" x1="0" y1="0" x2="1" y2="1"><stop offset="0" stop-color="#5b9bff"/><stop offset="1" stop-color="#2f7bff"/></linearGradient></defs>
+let logoN = 0;
+/** Brand mark. Each instance gets its own gradient id (a gradient defined inside a hidden element doesn't render). */
+export function logo() {
+  const id = `sccg${++logoN}`;
+  return `<svg viewBox="0 0 32 32" width="30" height="30" aria-hidden="true">
+  <defs><linearGradient id="${id}" x1="0" y1="0" x2="1" y2="1"><stop offset="0" stop-color="#5b9bff"/><stop offset="1" stop-color="#2f7bff"/></linearGradient></defs>
   <rect x="1.5" y="1.5" width="29" height="29" rx="8.5" fill="#0b0c0f" stroke="#23262e"/>
-  <circle cx="16" cy="16" r="7.6" fill="none" stroke="url(#sccg)" stroke-width="2"/>
-  <path d="M16 4.5v5M16 22.5v5M4.5 16h5M22.5 16h5" stroke="url(#sccg)" stroke-width="2" stroke-linecap="round"/>
+  <circle cx="16" cy="16" r="7.6" fill="none" stroke="url(#${id})" stroke-width="2"/>
+  <path d="M16 4.5v5M16 22.5v5M4.5 16h5M22.5 16h5" stroke="url(#${id})" stroke-width="2" stroke-linecap="round"/>
   <circle cx="16" cy="16" r="2" fill="#fff"/>
 </svg>`;
+}
