@@ -1,4 +1,4 @@
-# SURVEV.IO | CONTROL CENTER  ·  v1.3.0
+# SURVEV.IO | CONTROL CENTER  ·  v1.4.0
 
 A Chrome (Manifest V3) extension with a matte-black / electric-blue floating dashboard.
 
@@ -16,9 +16,9 @@ reveals hidden players, aims, or reads match data. The extension never modifies 
 
 1. In Chrome open **`chrome://extensions`** and click **Remove** on the old *SURVEV.IO | CONTROL CENTER* card.
 2. In Finder, delete the old `survev-control-center` folder.
-3. Double-click `survev-control-center-1.3.0.zip` and move the new `survev-control-center` folder somewhere permanent (e.g. Documents).
+3. Double-click `survev-control-center-1.4.0.zip` and move the new `survev-control-center` folder somewhere permanent (e.g. Documents).
 4. Back in `chrome://extensions`: **Developer mode** on (top-right) → **Load unpacked** → select the new folder (the one with `manifest.json`).
-5. Check the card says **1.3.0**. Pin it (puzzle-piece icon → pin).
+5. Check the card says **1.4.0**. Pin it (puzzle-piece icon → pin).
 6. Go to **https://survev.io**. The dashboard appears at the top-left. Tabs that were already open get it automatically;
    if one doesn't, press ⌘R once.
 
@@ -27,10 +27,25 @@ the new files, then press the circular **reload** arrow on the card in `chrome:/
 
 ### If you don't see the dashboard on survev.io
 - Click the extension's toolbar icon: the top line says exactly what is happening on the current tab
-  (*Running on this survev.io tab · v1.3.0* / *Not running on this tab yet* with a **Reload this tab** button).
+  (*Running on this survev.io tab · v1.4.0* / *Not running on this tab yet* with a **Reload this tab** button).
 - `chrome://extensions` → the card → **Details** → **Site access** must allow survev.io ("On all sites" or "On specific sites").
 - You hid it with **⌥D** — press ⌥D again, or click the toolbar icon → **Show dashboard**.
-- The card must show version **1.3.0** (1.0.0 only had the Demo Arena).
+- The card must show version **1.4.0** (1.0.0 only had the Demo Arena).
+
+## Automatic activation (install once)
+
+Nothing to switch on. After installing:
+
+| When | What happens automatically |
+|---|---|
+| **Install / update** | Settings are created (or upgraded, keeping your choices) in `chrome.storage.local`. survev.io tabs that are already open get the extension immediately. The Demo Arena is **not** opened. |
+| **Every visit to https://survev.io** (and every refresh) | The extension starts as soon as the page's HTML is ready (`document_end`): a small **status icon** appears top-left, the toolbar icon shows a green **ON** badge for that tab, real FPS monitoring and Pass tracking start. |
+| **After the game finishes loading** | Your saved choices for the game's own settings are re-applied (screen shake, interpolation, local rotation). High-res textures is never forced: the game reloads the page to change it, so the dashboard offers it as a one-click choice. |
+| **Any time** | **⌥D** (Option-D) opens / minimizes the dashboard. Click the icon to open it. Hover it to see the status (*Active · FPS monitoring on · Pass tracking on · Auto claim on*). |
+
+Your choices are remembered whether you make them with the dashboard switches, a preset, or the game's own settings menu.
+Settings → **Start minimized** controls the default; Boost → advanced → **Re-apply my choices when the game loads** can be turned off.
+Only one copy ever runs per tab (re-injection and refreshes are de-duplicated); nothing runs in the background service worker except on install, badge updates and shortcuts.
 
 ## Using it on survev.io
 
@@ -38,7 +53,7 @@ the new files, then press the circular **reload** arrow on the card in `chrome:/
   Auto claim. Everything else (analytics, benchmark, auto optimize, network, histories, shortcuts, theme…) appears
   after **Settings → Show advanced settings** (or the *Show advanced settings* button at the bottom of each tab).
 - **Move**: drag the header. **Minimize**: the **–** button (or double-click the header) → a small round icon; click it to expand, drag it to move.
-- **Hide / show**: **⌥D** (Option-D). Browser-wide: **⌥⇧D**. Master switch: **⌥⇧S**.
+- **Open / minimize**: **⌥D** (Option-D). Browser-wide: **⌥⇧D**. Master switch: **⌥⇧S**.
 - **Gameplay input is never captured**: clicks, wheel and typing inside the panel don't reach the game, and after
   you click a panel button the focus goes straight back so WASD keeps working. When minimized only the small pill
   is clickable; when hidden nothing is.
@@ -82,23 +97,27 @@ The Game settings card then shows the measured result next to that setting.
   exactly like clicking it yourself. Every confirmation is listed in **Claim history**.
 - Never edits XP, never calls game APIs, never unlocks anything.
 
-## What was tested on the real survev.io (v1.3.0)
+## What was tested on the real survev.io (v1.4.0)
 
-Chromium with the packaged extension loaded, opening the real https://survev.io (logged out):
+Chromium with the packaged extension freshly installed, opening the real https://survev.io (logged out):
 
 | Feature | Result on the real site |
 |---|---|
-| Dashboard loads over the real game page, game canvas `#cvs` untouched | ✓ works |
-| Only Boost / Pass / Settings; no dev overlay canvas; no dev-API traffic | ✓ works |
-| Simple mode by default (3 cards on Boost), compact 344 px panel | ✓ works |
-| Minimize to a 46 px round icon and expand again | ✓ works |
-| Injection into an already-open survev.io tab, no duplicate dashboard | ✓ works |
-| Real FPS / frame-time / stutter measurement of the survev.io tab | ✓ works (58–60 FPS in the test browser) |
-| Environment check (software vs hardware GPU rendering) | ✓ works (correctly flagged the test machine's software renderer) |
-| All four game graphics settings found and shown as switches | ✓ works |
-| Pass level, XP and both quest slots read from the page; logged-out state recognised | ✓ works (logged out: level 1, 0/50 XP placeholders) |
-| Popup status line + simple popup | ✓ works |
-| No errors from the extension | ✓ (the site logs one error of its own when `api.survev.io` is unreachable — same without the extension) |
+| Settings initialised at install, without opening the popup | ✓ works |
+| Activates automatically on page load — one instance | ✓ works |
+| Starts minimized as a small status icon; tooltip shows *Active · FPS monitoring on · Pass tracking on* | ✓ works |
+| Toolbar badge **ON** for the survev.io tab | ✓ works |
+| FPS monitoring running while minimized | ✓ works |
+| Reactivates after refresh (one instance, badge ON) | ✓ works |
+| ⌥D opens / minimizes; click icon to open | ✓ works |
+| Saved *screen shake off* re-applied automatically after the game's settings reset to default | ✓ works (game checkbox true → false via the game's own control) |
+| Saved *high-res off* **not** forced on load; offered as a choice in the dashboard | ✓ works |
+| Only Boost / Pass / Settings; no dev overlay canvas; no dev-API traffic; game canvas untouched | ✓ works |
+| Compact 344 px panel, simple mode by default | ✓ works |
+| Real FPS / frame-time measurement (54–60 FPS in the test browser) | ✓ works |
+| All four game graphics settings found as switches | ✓ works |
+| Pass level, XP and both quest slots read; logged-out state recognised | ✓ works |
+| No errors from the extension | ✓ (the site logs its own errors when `api.survev.io` is unreachable from the test machine — same without the extension) |
 
 Could **not** be exercised on the real site from the test machine (no account, no live match):
 real XP values, a real *"You got a new item!"* window (Auto Claim), XP/quest history from real progress, and
@@ -107,7 +126,7 @@ which reproduces the site's markup and the client behaviour documented in `docs/
 (presets via the game's checkboxes, reload consent, restore, before/after benchmark, input isolation, XP/level/quest
 history, auto-claim one-by-one and confirm-all) — all pass. Your first logged-in session is the real-world check.
 
-Other suites: `npm test` (35 unit tests) and `node tests/e2e.cjs` (Demo Arena, popup, private dev page) — pass.
+Other suites: `npm test` (35 unit tests), `node tests/e2e-live.cjs` (fixture: presets, reload consent, benchmarks, input isolation, Pass history and auto-claim) and `node tests/e2e.cjs` (Demo Arena, popup, private dev page) — all pass.
 
 ## Developer features (unchanged)
 Demo Arena, replays and the private dev API are documented in [docs/DEV-API.md](docs/DEV-API.md). Open the Demo Arena

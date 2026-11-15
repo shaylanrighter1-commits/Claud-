@@ -93,7 +93,8 @@ export class GameSettings {
   watch(fn) {
     const handler = (ev) => {
       const t = ev.target;
-      if (t && t.id && GAME_SETTINGS.some((s) => s.id === t.id)) fn(t.id, !!t.checked);
+      // isTrusted: true only for the player's own clicks in the game's settings menu (not for our el.click()).
+      if (t && t.id && GAME_SETTINGS.some((s) => s.id === t.id)) fn(t.id, !!t.checked, ev.isTrusted);
     };
     this.doc.addEventListener('change', handler, true);
     return () => this.doc.removeEventListener('change', handler, true);

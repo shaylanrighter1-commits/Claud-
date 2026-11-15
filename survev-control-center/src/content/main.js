@@ -8,6 +8,7 @@ import { State } from '../core/state.js';
 import { classifyLocation } from '../adapters/host-policy.js';
 import { PassManager } from '../pass/pass-manager.js';
 import { matchCombo, isTypingTarget } from '../core/keys.js';
+import { toggleDashboard } from '../core/util.js';
 import { DevAdapter } from '../adapters/dev-adapter.js';
 import { App } from '../app/app.js';
 import { Dashboard } from '../ui/dashboard.js';
@@ -147,7 +148,7 @@ export async function boot() {
       case 'scc:toggleDashboard':
         if (!ui) mount().then(() => send({ ok: true }));
         else {
-          state.toggle('loc.ui.hidden');
+          toggleDashboard(state);
           send({ ok: true });
         }
         return true;
@@ -176,6 +177,11 @@ async function bootLive() {
   const storage = createStorage(() => teardown());
   const state = new State(storage);
   await state.load();
+  // Every visit starts as the small status icon (⌥D or a click opens it), unless you turned that off.
+  if (state.data.loc.ui.startMinimized) {
+    state.set('loc.ui.minimized', true);
+    state.set('loc.ui.hidden', false);
+  }
   const css = await loadCss();
   const { host, shadow } = makeHost(css);
   const perf = new PerfController({ state, app: null, mode: 'live' });
@@ -196,23 +202,42 @@ async function bootLive() {
   dash.mount();
   if (!['perf', 'pass', 'settings'].includes(state.data.loc.ui.tab)) state.set('loc.ui.tab', 'perf');
 
+  // Re-apply saved game-setting choices once the game has initialised its own settings menu.
+  let prefsTimer = 0;
+  const applyPrefs = () => {
+    prefsTimer = setTimeout(() => perf.applySavedPrefs(), 1500);
+  };
+  if (document.readyState === 'complete') applyPrefs();
+  else window.addEventListener('load', applyPrefs, { once: true });
+
+  // Status indicator on the toolbar icon for this tab (green ON / red OFF). One message per change.
+  const report = () => {
+    try {
+      chrome.runtime.sendMessage({ type: 'scc:active', on: !!state.data.loc.master }).catch(() => {});
+    } catch (_) {
+      /* context gone */
+    }
+  };
+  report();
+  const offMaster = state.watch('loc.master', report);
+
   const onKey = (e) => {
     if (isTypingTarget(e.target) || !matchCombo(e, state.data.cfg.shortcuts.dashboard)) return;
     e.preventDefault();
     e.stopPropagation();
-    state.toggle('loc.ui.hidden');
+    toggleDashboard(state);
   };
   window.addEventListener('keydown', onKey, true);
 
   function onMessage(msg, _sender, send) {
     if (!msg || typeof msg.type !== 'string') return;
-    if (msg.type === 'scc:status') send({ ok: true, status: { phase: 'live', host: location.host, mounted: true, hidden: state.data.loc.ui.hidden, version: chrome.runtime.getManifest().version } });
+    if (msg.type === 'scc:status') send({ ok: true, status: { phase: 'live', host: location.host, mounted: true, hidden: state.data.loc.ui.hidden, minimized: state.data.loc.ui.minimized, monitoring: perf.monitor.running, prefs: perf.loadApply || null, version: chrome.runtime.getManifest().version } });
     else if (msg.type === 'scc:attach') {
       state.set('loc.ui.hidden', false);
       state.set('loc.ui.minimized', false);
       send({ ok: true, status: { phase: 'live' } });
     } else if (msg.type === 'scc:toggleDashboard') {
-      state.toggle('loc.ui.hidden');
+      toggleDashboard(state);
       send({ ok: true });
     }
   }
@@ -224,6 +249,9 @@ async function bootLive() {
     if (dead) return;
     dead = true;
     stopWatch();
+    clearTimeout(prefsTimer);
+    window.removeEventListener('load', applyPrefs);
+    offMaster();
     window.removeEventListener('keydown', onKey, true);
     try {
       chrome.runtime.onMessage.removeListener(onMessage);

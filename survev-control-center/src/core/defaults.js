@@ -1,7 +1,7 @@
 // Central configuration schema, defaults, presets and themes.
 
 export const PRODUCT = 'SURVEV.IO | CONTROL CENTER';
-export const VERSION = '1.3.0';
+export const VERSION = '1.4.0';
 export const SCHEMA_VERSION = 1;
 
 /** Test weapons used by the demo arena and as fallbacks for dev snapshots. */
@@ -118,6 +118,9 @@ export const DEFAULT_CFG = {
     autoAttach: true,
     benchSeconds: 15,
     net: { probe: false, endpoint: '/', intervalSec: 5 },
+    // Your chosen values for the game's own settings (null = no preference). Re-applied when the game loads.
+    applyOnLoad: true,
+    gamePrefs: { highResTex: null, screenShake: null, interpolation: null, localRotation: null },
   },
 
   pass: { track: true, autoClaim: false, claimMode: 'next' },
@@ -128,7 +131,7 @@ export const DEFAULT_LOCAL = {
   master: true,
   activeProfile: '',
   profiles: {},
-  ui: { tab: 'aiming', minimized: false, hidden: false, x: -1, y: -1, advanced: false },
+  ui: { tab: 'aiming', minimized: false, hidden: false, x: -1, y: -1, advanced: false, startMinimized: true },
   dev: { token: 'scc-dev-token', autoAttach: true },
   perf: {
     original: null,

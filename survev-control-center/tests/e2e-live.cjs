@@ -42,10 +42,48 @@ const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
   page.on('pageerror', (e) => errors.push(e.stack || e.message));
   console.log(REAL ? 'Target: REAL https://survev.io/' : 'Target: https://survev.io/ served from the local fixture');
 
+  // ---------------------------------------------------------------- automatic activation
+  let stored0 = {};
+  for (let i = 0; i < 30 && !(stored0['scc.config'] && stored0['scc.local']); i++) {
+    stored0 = await sw.evaluate(async () => chrome.storage.local.get(['scc.config', 'scc.local']));
+    if (!(stored0['scc.config'] && stored0['scc.local'])) await sleep(200);
+  }
+  check('settings initialised at install (no popup opened)', !!(stored0['scc.config'] && stored0['scc.local'] && stored0['scc.local'].ui.minimized === true));
   await page.goto('https://survev.io/', { waitUntil: 'domcontentloaded', timeout: 60000 });
   await page.waitForSelector('#scc-overlay-host', { state: 'attached', timeout: 20000 });
   await sleep(2500);
   const shadow = (fn) => page.evaluate(fn);
+  const openDash = async () => {
+    if (!(await page.locator('.scc-panel').isVisible())) {
+      await page.keyboard.press('Alt+KeyD');
+      await sleep(300);
+    }
+  };
+  const tabInfo = async () =>
+    sw.evaluate(async () => {
+      const [t] = await chrome.tabs.query({ url: 'https://survev.io/*' });
+      const status = await chrome.tabs.sendMessage(t.id, { type: 'scc:status' }).then((r) => r && r.status, () => null);
+      return { badge: await chrome.action.getBadgeText({ tabId: t.id }), status };
+    });
+  check('activates automatically on page load', (await page.evaluate(() => document.querySelectorAll('#scc-overlay-host').length)) === 1);
+  check('starts minimized as a small status icon', (await page.locator('.scc-pill').isVisible()) && !(await page.locator('.scc-panel').isVisible()));
+  let info = await tabInfo();
+  check('toolbar status badge shows ON for this tab', info.badge === 'ON', `badge "${info.badge}"`);
+  check('FPS monitoring runs while minimized', !!(info.status && info.status.monitoring));
+  const pillTitle = await page.locator('.scc-pill').getAttribute('title');
+  check('status icon tooltip explains state', /Active · FPS monitoring on · Pass tracking on/.test(pillTitle), pillTitle);
+  await page.screenshot({ path: path.join(shots, 'live-00-auto-minimized.png') });
+
+  // refresh -> reactivates by itself, once
+  await page.reload({ waitUntil: 'domcontentloaded' });
+  await page.waitForSelector('#scc-overlay-host', { state: 'attached', timeout: 20000 });
+  await sleep(2500);
+  info = await tabInfo();
+  check('reactivates after refresh (one instance, badge ON)', (await page.evaluate(() => document.querySelectorAll('#scc-overlay-host').length)) === 1 && info.badge === 'ON' && !!info.status);
+
+  await page.keyboard.press('Alt+KeyD');
+  await sleep(400);
+  check('⌥D opens the dashboard', await page.locator('.scc-panel').isVisible());
   check('dashboard loads on https://survev.io/', await page.locator('.scc-panel').isVisible());
   const tabs = await shadow(() => [...document.getElementById('scc-overlay-host').shadowRoot.querySelectorAll('.scc-tab')].map((t) => t.id.replace('scc-tab-', '')));
   check('only Performance, Pass and Settings tabs on the live site', JSON.stringify(tabs) === '["perf","pass","settings"]', tabs.join(','));
@@ -82,7 +120,8 @@ const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
   check('extension can inject into open survev.io tabs, without duplicates', injected >= 1 && (await page.evaluate(() => document.querySelectorAll('#scc-overlay-host').length)) === 1);
 
   // ---------------------------------------------------------------- performance
-  await page.click('#scc-tab-perf');
+  await openDash();
+    await page.click('#scc-tab-perf');
   await sleep(1500);
   const fps = await page.locator('.pf-fps').textContent();
   check('real frame-rate measured on the site', /^\d+$/.test(fps) && Number(fps) > 5, `${fps} FPS`);
@@ -113,6 +152,7 @@ const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
       l.ui.advanced = true;
       await chrome.storage.local.set({ 'scc.config': c, 'scc.local': l });
     });
+    await openDash();
     await page.click('#scc-tab-perf');
     await sleep(500);
     await page.getByText('Measure BEFORE').click();
@@ -144,6 +184,7 @@ const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 
   if (!REAL) {
     const shake0 = await page.evaluate(() => document.getElementById('screenShake').checked);
+    await openDash();
     await page.click('#scc-tab-perf');
     await page.locator('.scc-page.on .pf-gs-row', { hasText: 'Screen shake' }).locator('.scc-switch').click();
     await sleep(200);
@@ -155,9 +196,11 @@ const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 
   // ---------------------------------------------------------------- input isolation
   if (!REAL) {
+    await openDash();
     await page.click('#scc-tab-perf');
     const before = await page.evaluate(() => ({ ...window.__game }));
     await page.click('#scc-tab-settings');
+    await openDash();
     await page.click('#scc-tab-perf');
     await sleep(100);
     const mid = await page.evaluate(() => ({ ...window.__game }));
@@ -168,14 +211,14 @@ const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
     check('movement keys reach the game right after using the dashboard', after.keydown > mid.keydown && after.keys.includes('KeyW'));
     await page.keyboard.press('Alt+KeyD');
     await sleep(250);
-    check('Alt+D hides the dashboard', !(await page.locator('.scc-panel').isVisible()));
-    const box = { x: 1200, y: 300 };
-    await page.mouse.click(box.x, box.y);
+    check('⌥D minimizes the dashboard', !(await page.locator('.scc-panel').isVisible()) && (await page.locator('.scc-pill').isVisible()));
+    const pb = await page.locator('.scc-float').boundingBox();
+    await page.mouse.click(pb.x + 120, pb.y + 200); // where the panel was
     const hidden = await page.evaluate(() => window.__game.mousedown);
-    check('when hidden, clicks in that area go to the game', hidden > after.mousedown);
+    check('when minimized, clicks there go to the game', hidden > after.mousedown);
     await page.keyboard.press('Alt+KeyD');
     await sleep(250);
-    check('Alt+D shows it again', await page.locator('.scc-panel').isVisible());
+    check('⌥D opens it again', await page.locator('.scc-panel').isVisible());
   }
 
   // ---------------------------------------------------------------- pass
@@ -229,6 +272,35 @@ const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
   await page.screenshot({ path: path.join(shots, 'live-04-pass.png') });
   await page.locator('.scc-panel').screenshot({ path: path.join(shots, 'live-05-pass-panel.png') });
 
+  // ---------------------------------------------------------------- saved game-setting choices re-applied on load
+  await sw.evaluate(async () => {
+    const c = (await chrome.storage.local.get('scc.config'))['scc.config'];
+    c.perf.gamePrefs = { highResTex: false, screenShake: false, interpolation: null, localRotation: null };
+    await chrome.storage.local.set({ 'scc.config': c });
+  });
+  // simulate a fresh game state (e.g. cleared site data): the game's own defaults are screen shake ON, high-res ON
+  await page.evaluate(() => { for (const k of Object.keys(localStorage)) localStorage.removeItem(k); });
+  await page.reload({ waitUntil: 'load' });
+  await page.waitForSelector('#scc-overlay-host', { state: 'attached', timeout: 20000 });
+  const g0 = await page.evaluate(() => ({ shake: document.getElementById('screenShake').checked, hi: document.getElementById('highResTex').checked }));
+  await sleep(3500);
+  const g1 = await page.evaluate(() => ({ shake: document.getElementById('screenShake').checked, hi: document.getElementById('highResTex').checked }));
+  check('saved screen-shake choice re-applied automatically on load', g0.shake === true && g1.shake === false, `${g0.shake} → ${g1.shake}`);
+  check('high-res choice NOT forced on load (it would reload the page)', g1.hi === g0.hi);
+  info = await tabInfo();
+  check('on-load result reported (applied + pending high-res)', !!(info.status && info.status.prefs && info.status.prefs.applied.some((a) => a.id === 'screenShake') && info.status.prefs.pending.some((a) => a.id === 'highResTex')), JSON.stringify(info.status && info.status.prefs && { applied: info.status.prefs.applied.map((a) => a.id), pending: info.status.prefs.pending.map((a) => a.id) }));
+  await openDash();
+    await page.click('#scc-tab-perf');
+  await sleep(500);
+  check('dashboard offers the high-res change as a choice', /saved choice: High-resolution textures off/.test(await page.locator('.pf-onload').textContent()));
+  await page.locator('.scc-panel').screenshot({ path: path.join(shots, 'live-07-onload.png') });
+  // put things back for the real site's test profile
+  await sw.evaluate(async () => {
+    const c = (await chrome.storage.local.get('scc.config'))['scc.config'];
+    c.perf.gamePrefs = { highResTex: null, screenShake: null, interpolation: null, localRotation: null };
+    await chrome.storage.local.set({ 'scc.config': c });
+  });
+
   // ---------------------------------------------------------------- popup
   const pop = await ctx.newPage();
   await pop.setViewportSize({ width: 400, height: 590 });
@@ -236,7 +308,7 @@ const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
   await pop.waitForSelector('.scc-panel');
   await sleep(500);
   check('popup is simple by default (Boost, Pass, Settings)', (await pop.locator('.scc-tab').count()) === 3);
-  check('popup shows status line with version', /v1\.3\.0/.test(await pop.locator('#status').textContent()));
+  check('popup shows status line with version', /v1\.4\.0/.test(await pop.locator('#status').textContent()));
   await pop.screenshot({ path: path.join(shots, 'live-06-popup.png') });
 
   // The real site may log its own errors (e.g. blocked API/ad requests in a sandbox); only ours count here.

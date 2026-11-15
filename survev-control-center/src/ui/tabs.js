@@ -631,6 +631,7 @@ export const SETTINGS_TAB = {
       title: 'General',
       rows: [
         X(masterRow),
+        T('loc.ui.startMinimized', 'Start minimized', 'Each visit shows only the small status icon. Press ⌥D or click it to open.'),
         T('loc.ui.advanced', 'Show advanced settings', 'Analytics, benchmarks, auto optimize, histories, shortcuts, theme, saved configurations.'),
         { type: 'custom', advanced: true, render: presetChips },
         T('cfg.hud.show', 'Status HUD on canvas', 'Small FPS / mode chip in the bottom-left of the dev overlay.', { advanced: true }),
@@ -642,7 +643,7 @@ export const SETTINGS_TAB = {
       sub: 'Work inside the Demo Arena and on connected dev pages. Click a shortcut, then press the new keys.',
       rows: [
         K('cfg.shortcuts.master', 'Master ON / OFF', { conflicts: SHORTCUT_PATHS }),
-        K('cfg.shortcuts.dashboard', 'Show / hide dashboard', { conflicts: SHORTCUT_PATHS }),
+        K('cfg.shortcuts.dashboard', 'Open / minimize dashboard', { conflicts: SHORTCUT_PATHS }),
         K('cfg.shortcuts.pause', 'Pause demo / replay', { conflicts: SHORTCUT_PATHS }),
         K('cfg.shortcuts.record', 'Start / stop recording', { conflicts: SHORTCUT_PATHS }),
         N('Browser-level shortcuts (Alt+Shift+S, Alt+Shift+D) can be changed at chrome://extensions/shortcuts.'),

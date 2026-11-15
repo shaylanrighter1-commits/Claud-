@@ -122,3 +122,12 @@ export function pickJsonFile() {
     input.click();
   });
 }
+
+/** ⌥D behaviour everywhere: hidden or minimized -> open; open -> minimize. */
+export function toggleDashboard(state) {
+  const ui = state.data.loc.ui;
+  if (ui.hidden || ui.minimized) {
+    state.set('loc.ui.hidden', false);
+    state.set('loc.ui.minimized', false);
+  } else state.set('loc.ui.minimized', true);
+}

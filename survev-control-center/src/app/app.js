@@ -6,7 +6,7 @@ import { computeVisibility } from '../engine/visibility.js';
 import { AimDiagnostics } from '../engine/diagnostics.js';
 import { Renderer } from '../render/renderer.js';
 import { Recorder, ReplaySource } from '../sim/replay.js';
-import { Bus, downloadJson, pickJsonFile, stamp } from '../core/util.js';
+import { Bus, downloadJson, pickJsonFile, stamp, toggleDashboard } from '../core/util.js';
 import { matchCombo, isTypingTarget } from '../core/keys.js';
 import { WEAPONS } from '../core/defaults.js';
 import { lerp } from '../core/math.js';
@@ -84,7 +84,7 @@ export class App {
       if (isTypingTarget(e.target) || e.defaultPrevented) return;
       const sc = this.state.data.cfg.shortcuts;
       if (matchCombo(e, sc.master)) return this._shortcut(e, () => this.state.toggle('loc.master'));
-      if (matchCombo(e, sc.dashboard)) return this._shortcut(e, () => this.state.toggle('loc.ui.hidden'));
+      if (matchCombo(e, sc.dashboard)) return this._shortcut(e, () => toggleDashboard(this.state));
       if (matchCombo(e, sc.pause)) return this._shortcut(e, () => this.togglePause());
       if (matchCombo(e, sc.record)) return this._shortcut(e, () => this.toggleRecording());
       const lk = this.state.data.cfg.aiming.lockKey;

@@ -45,7 +45,12 @@ export class PerfController {
     if (this.started) return;
     this.started = true;
     this.offs.push(this.monitor.onTick(() => this._tick()));
-    this.offs.push(this.settings.watch(() => this.bus.emit('settings')));
+    this.offs.push(
+      this.settings.watch((id, checked, byPlayer) => {
+        if (byPlayer) this.rememberPref(id, checked); // the player changed it in the game's own menu
+        this.bus.emit('settings');
+      })
+    );
     this.offs.push(this.state.watch('cfg.perf', () => this._sync()));
     this.net.start();
     this._sync();
@@ -173,6 +178,7 @@ export class PerfController {
       const meta = GAME_SETTINGS.find((s) => s.id === sid);
       const r = this.settings.set(sid, v);
       const base = { kind: 'game', key: sid, label: meta.label, to: v };
+      if (r === 'changed' || r === 'needs-reload' || r === 'unchanged') this.rememberPref(sid, v);
       if (r === 'changed') changes.push({ ...base, status: meta.applies === 'next-match' ? 'next-match' : 'applied' });
       else if (r === 'needs-reload') {
         changes.push({ ...base, status: 'needs-reload' });
@@ -200,8 +206,41 @@ export class PerfController {
     if (!meta) return 'missing';
     this._saveOriginal();
     const r = this.settings.set(id, value, { allowReload: true });
+    if (r === 'changed' || r === 'unchanged') this.rememberPref(id, value);
     this.bus.emit('settings');
     return r;
+  }
+
+  /** Remember the player's choice for one of the game's settings (persisted in chrome.storage.local). */
+  rememberPref(id, value) {
+    const prefs = this.cfg.gamePrefs || {};
+    if (prefs[id] === value) return;
+    this.state.set('cfg.perf.gamePrefs', { ...prefs, [id]: value });
+  }
+
+  /**
+   * Re-apply saved preferences after the game has initialised its own settings (once per page load).
+   * Settings that apply from the next match are set through the game's checkbox. High-res textures would make
+   * the game reload the page, so it is never applied automatically — it is reported as pending instead.
+   */
+  applySavedPrefs() {
+    const out = { applied: [], pending: [], at: Date.now() };
+    if (!this.cfg.applyOnLoad) {
+      this.loadApply = { ...out, skipped: true };
+      return this.loadApply;
+    }
+    const read = this.settings.read();
+    for (const [id, v] of Object.entries(this.cfg.gamePrefs || {})) {
+      if (v == null || !read[id] || !read[id].present || read[id].checked === v) continue;
+      const meta = GAME_SETTINGS.find((s) => s.id === id);
+      const r = this.settings.set(id, v);
+      if (r === 'changed') out.applied.push({ id, label: meta.label, value: v });
+      else if (r === 'needs-reload') out.pending.push({ id, label: meta.label, value: v });
+    }
+    if (out.pending.length) this.lastResult = { kind: 'prefs', at: Date.now(), changes: [], pending: out.pending.map((p) => ({ id: p.id, value: p.value })) };
+    this.loadApply = out;
+    this.bus.emit('settings');
+    return out;
   }
 
   restoreOriginal() {
@@ -216,6 +255,7 @@ export class PerfController {
     }
     const pending = [];
     for (const [id, v] of Object.entries(o.game || {})) {
+      this.rememberPref(id, v);
       const r = this.settings.set(id, v);
       if (r === 'changed') restored++;
       else if (r === 'needs-reload') pending.push({ id, value: v });

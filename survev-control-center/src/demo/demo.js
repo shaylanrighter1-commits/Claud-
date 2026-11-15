@@ -7,6 +7,7 @@ import { DemoSource } from '../sim/demo-source.js';
 import { SCENARIOS } from '../sim/world.js';
 import { Dashboard } from '../ui/dashboard.js';
 import { PerfController } from '../perf/perf-controller.js';
+import { toggleDashboard } from '../core/util.js';
 
 async function main() {
   const state = new State(createStorage());
@@ -59,7 +60,7 @@ async function main() {
 
   if (globalThis.chrome && chrome.runtime && chrome.runtime.onMessage) {
     chrome.runtime.onMessage.addListener((msg) => {
-      if (msg && msg.type === 'scc:toggleDashboard') state.toggle('loc.ui.hidden');
+      if (msg && msg.type === 'scc:toggleDashboard') toggleDashboard(state);
     });
   }
   window.addEventListener('pagehide', () => {

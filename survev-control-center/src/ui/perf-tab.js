@@ -288,6 +288,19 @@ function gameSettings(ctx) {
   return needPerf(ctx, (perf) => {
     const list = h('div', { class: 'pf-gs' });
     const tier = h('div', { class: 'scc-hint adv' });
+    const onLoad = h('div', { class: 'pf-onload scc-hidden' });
+    const renderOnLoad = () => {
+      const r = perf.loadApply;
+      onLoad.textContent = '';
+      if (!r || r.skipped || (!r.applied.length && !r.pending.length)) return onLoad.classList.add('scc-hidden');
+      onLoad.classList.remove('scc-hidden');
+      if (r.applied.length) onLoad.append(h('div', { text: `Re-applied on load: ${r.applied.map((a) => `${a.label} ${a.value ? 'on' : 'off'}`).join(', ')}` }));
+      for (const p of r.pending) {
+        onLoad.append(h('div', { class: 'pf-warn', text: `Your saved choice: ${p.label} ${p.value ? 'on' : 'off'}. The game applies this by reloading the page, so it was not done automatically.` }));
+        onLoad.append(buttonControl({ text: 'Apply & reload now', icon: 'refresh', variant: 'ghost', onClick: () => perf.applyPending() }));
+      }
+    };
+    ctx.disposers.push(perf.bus.on('settings', renderOnLoad));
     const armed = {};
     const render = () => {
       const read = perf.settings.read();
@@ -334,7 +347,8 @@ function gameSettings(ctx) {
     ctx.disposers.push(perf.bus.on('settings', render));
     ctx.watch('loc.perf.settingTests', render);
     render();
-    return h('div', {}, list, tier, h('p', { class: 'scc-note adv', text: 'Switches click the game’s own checkboxes — the same as using its settings menu. Interpolation and local rotation cost no FPS; turning interpolation off makes movement choppier.' }));
+    renderOnLoad();
+    return h('div', {}, onLoad, list, tier, h('p', { class: 'scc-note adv', text: 'Switches click the game’s own checkboxes — the same as using its settings menu. Interpolation and local rotation cost no FPS; turning interpolation off makes movement choppier.' }));
   });
 }
 
@@ -593,7 +607,13 @@ export const PERF_TAB = {
   cards: [
     { title: 'Live FPS', enable: 'cfg.perf.monitor', rows: [X(sourceBanner), X(hero)] },
     { title: 'Graphics preset', rows: [X(presetCards)] },
-    { title: 'Game settings', rows: [X(gameSettings)] },
+    {
+      title: 'Game settings',
+      rows: [
+        X(gameSettings),
+        T('cfg.perf.applyOnLoad', 'Re-apply my choices when the game loads', 'Your switches here (and in the game’s menu) are remembered. High-res textures is offered, never forced, because it reloads the page.', { advanced: true }),
+      ],
+    },
     {
       title: 'Frame-time analytics',
       advanced: true,

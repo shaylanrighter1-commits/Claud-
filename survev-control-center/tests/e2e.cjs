@@ -45,8 +45,12 @@ const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
   const demo = await ctx.newPage();
   hook(demo, 'demo');
   await demo.goto(`chrome-extension://${extId}/src/demo/demo.html`);
-  await demo.waitForSelector('.scc-panel');
-  await demo.evaluate(() => window.__scc.state.set('loc.ui.advanced', true)); // this suite exercises advanced controls
+  await demo.waitForSelector('.scc-float');
+  await demo.evaluate(() => {
+    window.__scc.state.set('loc.ui.advanced', true); // this suite exercises advanced controls
+    window.__scc.state.set('loc.ui.minimized', false);
+    window.__scc.state.set('loc.ui.tab', 'aiming');
+  });
   await sleep(1500);
   await demo.mouse.move(900, 380);
   await sleep(400);
@@ -86,7 +90,7 @@ const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
   await demo.keyboard.press('Alt+KeyM');
   await demo.keyboard.press('Alt+KeyD');
   await sleep(250);
-  check('Alt+D hides dashboard', !(await demo.locator('.scc-float').isVisible()));
+  check('Alt+D minimizes dashboard', !(await demo.locator('.scc-panel').isVisible()) && (await demo.locator('.scc-pill').isVisible()));
   await demo.keyboard.press('Alt+KeyD');
   await sleep(250);
 

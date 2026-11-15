@@ -3,6 +3,7 @@
 
 import { h, Bus } from '../core/util.js';
 import { THEMES, VERSION } from '../core/defaults.js';
+import { prettyCombo } from '../core/keys.js';
 import { logo, icon } from './icons.js';
 import { buildControl } from './controls.js';
 import { ALL_TABS, TAB_SETS } from './tabs.js';
@@ -107,6 +108,8 @@ export class Dashboard {
     this.ctx.watch('cfg.theme', () => this.applyTheme());
     this.ctx.watch('cfg.perf.liteUi', () => this.applyTheme());
     this.ctx.watch('loc.master', () => this.refresh());
+    this.ctx.watch('cfg.perf.monitor', () => setTimeout(() => this.refresh(), 0));
+    this.ctx.watch('cfg.pass', () => this.refresh());
     this.ctx.watch('loc.ui', () => this.refresh());
     if (this.app) this.disposers.push(this.app.bus.on('status', () => this.refresh()));
     this.applyTheme();
@@ -260,10 +263,19 @@ export class Dashboard {
     const tone = !loc.master ? 'red' : st && st.recording ? 'red' : st && st.mode === 'replay' ? 'amber' : 'green';
     this.statusDot.className = `scc-dot ${tone}`;
     this.pill.querySelector('.pill-dot').className = `scc-dot pill-dot ${tone}`;
+    const parts = [`SURVEV.IO | CONTROL CENTER v${VERSION}`, loc.master ? 'Active' : 'Master OFF'];
+    if (this.ctx.perf) parts.push(this.ctx.perf.monitor.running ? 'FPS monitoring on' : 'FPS monitoring off');
+    if (this.ctx.pass) parts.push(state.data.cfg.pass.track ? 'Pass tracking on' : 'Pass tracking off');
+    if (this.ctx.pass && state.data.cfg.pass.autoClaim) parts.push('Auto claim on');
+    parts.push(`${prettyCombo(state.data.cfg.shortcuts.dashboard)} or click to open`);
+    this.pill.title = parts.join(' · ');
     this.powerBtn.classList.toggle('off', !loc.master);
     if (this.mode === 'floating') {
       const min = !!loc.ui.minimized;
+      const changed = this.root.classList.contains('min') !== min;
       this.root.classList.toggle('min', min);
+      // Size changes between icon and panel: re-clamp so the expanded panel is always fully on screen.
+      if (changed && this.pos) requestAnimationFrame(() => this.place(false, this.state.data.loc.ui.x < 0 ? null : this.pos));
       this.root.classList.toggle('gone', !!loc.ui.hidden);
     }
   }
@@ -321,7 +333,7 @@ export class Dashboard {
       x = this.defaultSide === 'left' ? 20 : Math.max(12, window.innerWidth - w - 20);
       y = 20;
     }
-    x = Math.min(Math.max(8, x), Math.max(8, window.innerWidth - Math.min(w, 120) - 8));
+    x = Math.min(Math.max(8, x), Math.max(8, window.innerWidth - w - 8));
     const minH = this.state.data.loc.ui.minimized ? 56 : 280;
     y = Math.min(Math.max(8, y), Math.max(8, window.innerHeight - minH));
     this.float.style.transform = `translate(${Math.round(x)}px, ${Math.round(y)}px)`;

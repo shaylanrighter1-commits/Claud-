@@ -97,7 +97,7 @@ export class DevAdapter {
     clearTimeout(this.timer);
     if (this.status.phase !== 'probing' && this.status.phase !== 'rejected') return;
     this.nonce = randomNonce();
-    this._post({ type: 'hello', nonce: this.nonce, ext: 'scc', version: '1.3.0' });
+    this._post({ type: 'hello', nonce: this.nonce, ext: 'scc', version: '1.4.0' });
     const age = performance.now() - this.started;
     this.timer = setTimeout(() => this._hello(), age < 60000 ? 2500 : 15000);
   }

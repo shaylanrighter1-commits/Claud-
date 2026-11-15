@@ -429,3 +429,5 @@
 .pf-chip { padding: 6px 7px; }
 .pf-chip b { font-size: 13px; white-space: nowrap; }
 .pf-chip span { font-size: 8.6px; letter-spacing: 0.03em; }
+.pf-onload { display: grid; gap: 6px; margin-bottom: 8px; padding: 8px 10px; border-radius: 10px; background: var(--soft); border: 1px solid color-mix(in srgb, var(--accent) 35%, transparent); font-size: 11.5px; }
+.pf-onload .scc-btn { margin-top: 0; justify-self: start; }
