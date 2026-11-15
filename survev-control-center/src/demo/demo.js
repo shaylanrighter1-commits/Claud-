@@ -6,6 +6,7 @@ import { App } from '../app/app.js';
 import { DemoSource } from '../sim/demo-source.js';
 import { SCENARIOS } from '../sim/world.js';
 import { Dashboard } from '../ui/dashboard.js';
+import { PerfController } from '../perf/perf-controller.js';
 
 async function main() {
   const state = new State(createStorage());
@@ -39,9 +40,12 @@ async function main() {
   });
   hint.textContent = SCENARIOS[scenarioSel.value].hint;
 
+  const perf = new PerfController({ state, app, mode: 'demo' });
+  perf.start();
   const dash = new Dashboard({
     state,
     app,
+    perf,
     mode: 'floating',
     parent: document.body,
     getDevStatus: async () => ({
@@ -60,10 +64,11 @@ async function main() {
   }
   window.addEventListener('pagehide', () => {
     app.destroy();
+    perf.destroy();
     dash.destroy();
     state.destroy();
   });
-  window.__scc = { app, state, source }; // handy for debugging in DevTools
+  window.__scc = { app, state, source, perf }; // handy for debugging in DevTools
 }
 
 main().catch((e) => {

@@ -8,7 +8,7 @@ import { DEFAULT_CFG, DEFAULT_LOCAL } from './defaults.js';
 import { clone, debounce, isObj } from './util.js';
 
 const KEYS = { cfg: 'scc.config', loc: 'scc.local' };
-const FREE_FORM = new Set(['profiles']);
+const FREE_FORM = new Set(['profiles', 'settingTests']);
 
 /** Merge saved values over defaults, dropping unknown keys and wrongly-typed values. */
 export function mergeDefaults(def, sav, key = '') {

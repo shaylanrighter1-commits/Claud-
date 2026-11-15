@@ -9,10 +9,22 @@
       canvas { position: fixed; inset: 0; width: 100%; height: 100%; display: block; cursor: crosshair; }
       #banner { position: fixed; left: 50%; top: 14px; transform: translateX(-50%); padding: 8px 16px; border-radius: 20px; background: #15171b; border: 1px solid #2a2d34; z-index: 2; }
       #banner b { color: #2f7bff; }
+      #settings { position: fixed; left: 14px; bottom: 14px; z-index: 2; padding: 10px 14px; border-radius: 12px; background: #15171b; border: 1px solid #2a2d34; display: grid; gap: 6px; font-size: 12px; }
+      #settings .title { font-weight: 700; } #settings small { color: #7d8494; font-weight: 400; }
+      .modal-settings-item { display: flex; gap: 8px; align-items: center; } .modal-settings-text { cursor: pointer; }
+      .load b { color: #fbbf24; font-size: 10px; } .load input { vertical-align: middle; width: 110px; }
     </style>
   </head>
   <body>
-    <canvas id="game"></canvas>
+    <canvas id="cvs"></canvas>
+    <div id="settings">
+      <div class="title">Game settings <small>(mirrors the real client's wiring)</small></div>
+      <div class="modal-settings-item"><input type="checkbox" id="highResTex" /><span class="modal-settings-text">High resolution textures</span></div>
+      <div class="modal-settings-item"><input type="checkbox" id="screenShake" /><span class="modal-settings-text">Screen shake</span></div>
+      <div class="modal-settings-item"><input type="checkbox" id="interpolation" /><span class="modal-settings-text">Interpolation</span></div>
+      <div class="modal-settings-item"><input type="checkbox" id="localRotation" /><span class="modal-settings-text">Local rotation</span></div>
+      <label class="load">Synthetic load <b>TEST ONLY</b> <input type="range" id="synthLoad" min="0" max="40" value="0" /> <span id="synthOut">0 ms</span></label>
+    </div>
     <div id="banner"><b>Example game</b> · private test build · WASD move · mouse aim · click fire — the Control Center overlay appears automatically once the handshake succeeds</div>
     <script type="module" src="main.js"></script>
   </body>

@@ -140,6 +140,22 @@ function sanitizeEvents(list) {
   return out;
 }
 
+const WS_STATES = new Set(['connecting', 'open', 'closing', 'closed', 'none']);
+
+/** Optional network values the game itself publishes (never measured or invented by the extension). */
+export function sanitizeNet(n) {
+  if (!n || typeof n !== 'object') return null;
+  const int = (v) => (typeof v === 'number' && Number.isFinite(v) && v >= 0 ? Math.round(v) : null);
+  const out = {
+    rttMs: typeof n.rttMs === 'number' && Number.isFinite(n.rttMs) && n.rttMs >= 0 && n.rttMs < 60000 ? n.rttMs : null,
+    wsState: WS_STATES.has(n.wsState) ? n.wsState : null,
+    disconnects: int(n.disconnects),
+    reconnects: int(n.reconnects),
+    serverTickMs: typeof n.serverTickMs === 'number' && Number.isFinite(n.serverTickMs) && n.serverTickMs > 0 ? n.serverTickMs : null,
+  };
+  return Object.values(out).some((v) => v != null) ? out : null;
+}
+
 export function sanitizeSnapshot(raw, opts = {}) {
   if (!raw || typeof raw !== 'object') return null;
   const self = playerOf(raw.self, true);
@@ -175,5 +191,6 @@ export function sanitizeSnapshot(raw, opts = {}) {
     loot: sanitizeLoot(raw.loot),
     bullets: sanitizeBullets(raw.bullets),
     events: sanitizeEvents(raw.events),
+    net: sanitizeNet(raw.net),
   };
 }

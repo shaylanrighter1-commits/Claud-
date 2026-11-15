@@ -5,6 +5,8 @@ import { DEFAULT_CFG, PRESETS, THEMES, WEAPONS, VERSION } from '../core/defaults
 import { mergeDefaults } from '../core/state.js';
 import { icon } from './icons.js';
 import { buttonControl } from './controls.js';
+import { PERF_TAB } from './perf-tab.js';
+import { PASS_TAB } from './pass-tab.js';
 
 const T = (path, label, hint, x = {}) => ({ type: 'toggle', path, label, hint, ...x });
 const S = (path, label, min, max, step, unit, x = {}) => ({ type: 'slider', path, label, min, max, step, unit, ...x });
@@ -520,6 +522,7 @@ function profilesCard(ctx) {
 
 const PHASES = {
   demo: ['accent', 'Demo mode'],
+  live: ['accent', 'Live site · developer modules off'],
   idle: ['muted', 'Not attached'],
   probing: ['amber', 'Waiting for dev API'],
   authorized: ['green', 'Authorized session'],
@@ -648,4 +651,13 @@ export const SETTINGS_TAB = {
   ],
 };
 
-export const ALL_TABS = [...TABS, SETTINGS_TAB];
+export const ALL_TABS = [...TABS, PERF_TAB, PASS_TAB, SETTINGS_TAB];
+
+/** Tab sets per context. Developer modules are never offered on the live site. */
+export const TAB_SETS = {
+  dev: ['aiming', 'entities', 'visibility', 'perf', 'settings'],
+  live: ['perf', 'pass', 'settings'],
+  popup: ['aiming', 'entities', 'visibility', 'perf', 'pass', 'settings'],
+};
+const SHORT = { aiming: 'Aim', entities: 'Entities', visibility: 'Vision', perf: 'Boost', pass: 'Pass', settings: 'Settings' };
+for (const t of ALL_TABS) t.short = SHORT[t.id] || t.label;

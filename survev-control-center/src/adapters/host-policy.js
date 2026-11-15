@@ -1,6 +1,8 @@
-// Host policy for the developer API adapter.
-// The adapter only ever activates on loopback / private-network development hosts.
-// Public multiplayer sites (including Survev.io) are explicitly rejected.
+// Host policy.
+//   private  -> loopback / private-network dev hosts: every module, incl. the developer API adapter.
+//   live     -> the public survev.io site: ONLY Performance Boost, Pass and Settings. No dev adapter, no overlay
+//               renderer, no aiming / entity / visibility modules.
+// The developer API adapter (evaluateLocation) never activates on a public host.
 
 const BLOCKED = [/(^|\.)survev\.io$/i, /(^|\.)surviv\.io$/i, /(^|\.)zurviv\.io$/i, /(^|\.)resurviv\.biz$/i];
 
@@ -18,12 +20,22 @@ export function isPrivateHost(hostname) {
   return false;
 }
 
-/** @returns {{ok:boolean, reason:string}} */
+const LIVE_HOSTS = new Set(['survev.io']);
+
+/** @returns {'private'|'live'|'none'} */
+export function classifyLocation(loc) {
+  const host = String((loc && loc.hostname) || '').toLowerCase();
+  const proto = (loc && loc.protocol) || '';
+  if (proto === 'https:' && LIVE_HOSTS.has(host)) return 'live';
+  return evaluateLocation(loc).ok ? 'private' : 'none';
+}
+
+/** Developer-adapter policy. @returns {{ok:boolean, reason:string}} */
 export function evaluateLocation(loc) {
   const host = (loc && loc.hostname) || '';
   const proto = (loc && loc.protocol) || '';
   if (proto !== 'http:' && proto !== 'https:') return { ok: false, reason: `Protocol ${proto || '?'} is not supported` };
-  if (BLOCKED.some((re) => re.test(host))) return { ok: false, reason: `${host} is a public multiplayer site. Control Center never runs there.` };
+  if (BLOCKED.some((re) => re.test(host))) return { ok: false, reason: `${host} is a public multiplayer site — developer modules are disabled there.` };
   if (!isPrivateHost(host)) return { ok: false, reason: `${host} is not a loopback/private development host` };
   return { ok: true, reason: '' };
 }

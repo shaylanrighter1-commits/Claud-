@@ -1,7 +1,7 @@
 // Central configuration schema, defaults, presets and themes.
 
 export const PRODUCT = 'SURVEV.IO | CONTROL CENTER';
-export const VERSION = '1.0.0';
+export const VERSION = '1.2.0';
 export const SCHEMA_VERSION = 1;
 
 /** Test weapons used by the demo arena and as fallbacks for dev snapshots. */
@@ -107,6 +107,20 @@ export const DEFAULT_CFG = {
   theme: { preset: 'electric', accent: '#2f7bff', radius: 14, panelOpacity: 94, compact: false, motion: true },
 
   shortcuts: { master: 'Alt+KeyM', dashboard: 'Alt+KeyD', pause: 'Alt+KeyP', record: 'Alt+KeyR' },
+
+  perf: {
+    monitor: true,
+    window: 10,
+    targetFps: 60,
+    autoOptimize: false,
+    preset: '',
+    liteUi: false,
+    autoAttach: true,
+    benchSeconds: 15,
+    net: { probe: false, endpoint: '/', intervalSec: 5 },
+  },
+
+  pass: { track: true, autoClaim: false, claimMode: 'next' },
 };
 
 /** Device-local state (never part of saved configurations). */
@@ -116,6 +130,13 @@ export const DEFAULT_LOCAL = {
   profiles: {},
   ui: { tab: 'aiming', minimized: false, hidden: false, x: -1, y: -1 },
   dev: { token: 'scc-dev-token', autoAttach: true },
+  perf: {
+    original: null,
+    bench: { before: null, after: null },
+    autoLog: [],
+    settingTests: {},
+  },
+  pass: { last: null, history: [], claims: [] },
 };
 
 /** Quick presets: patches applied on top of the defaults (theme + shortcuts are preserved). */

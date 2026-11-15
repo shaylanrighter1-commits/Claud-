@@ -38,6 +38,8 @@ export class App {
     this.vis = null;
     this.aim = null;
     this.errors = 0;
+    this.costMs = 0;
+    this.canvasHidden = false;
     this.emitAt = 0;
     this.keys = new Set();
     this.mouse = { x: 0, y: 0, has: false, down: false };
@@ -224,7 +226,9 @@ export class App {
     this.last = ts;
     this.fps = lerp(this.fps, 1 / dt, 0.08);
     try {
+      const t0 = performance.now();
       this._tick(dt, ts / 1000);
+      this.costMs = this.costMs * 0.95 + (performance.now() - t0) * 0.05;
     } catch (e) {
       if (++this.errors <= 5) console.error('[SCC] frame error', e);
       if (this.errors > 50) {
@@ -232,6 +236,14 @@ export class App {
         this.stop();
       }
     }
+  }
+
+  /** In overlay mode an idle full-screen canvas still costs compositing every frame, so hide it. */
+  _setCanvasVisible(on) {
+    if (this.mode !== 'overlay' || this.canvasHidden === !on) return;
+    this.canvasHidden = !on;
+    if (!on) this.renderer.clear();
+    this.canvas.style.display = on ? '' : 'none';
   }
 
   _viewOf(snap) {
@@ -292,11 +304,12 @@ export class App {
       snap = this.source.update(dt);
     }
 
-    if (!snap) {
-      this.renderer.clear();
-      this.lastSnap = null;
+    if (!snap || (this.mode === 'overlay' && !master)) {
+      this.lastSnap = snap || null;
+      this._setCanvasVisible(false);
       return;
     }
+    this._setCanvasVisible(true);
     this.lastSnap = snap;
 
     // visibility (LOS flags are always needed; polygon/contacts only when drawn)

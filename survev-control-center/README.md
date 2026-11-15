@@ -1,110 +1,109 @@
-# SURVEV.IO | CONTROL CENTER
+# SURVEV.IO | CONTROL CENTER  ·  v1.2.0
 
-A Chrome (Manifest V3) **developer visualization & diagnostics suite** for a 2D top-down shooter you are building.
-Matte-black UI, electric-blue accents, a toolbar popup and a draggable, minimizable in-game dashboard — all
-settings synchronized through `chrome.storage.local`.
+A Chrome (Manifest V3) extension with a matte-black / electric-blue floating dashboard.
 
-> **Scope.** This tool runs in three places only: its own **Demo Arena** (synthetic players), **replays** you
-> recorded, and **private development sessions** on `localhost` / private-network hosts that explicitly
-> authorize it. It does **not** connect to, read from, or modify public multiplayer games (Survev.io included —
-> that host is blocked in code). It is read-only: it never injects input into a page.
+| Where | Tabs available | What it does |
+|---|---|---|
+| **https://survev.io** (the real site) | **Boost** · **Pass** · Settings | Real frame-rate measurement, graphics presets through the game's own settings, before/after benchmarks; Survevr Pass level/XP/quest tracking and optional auto-confirm of unlocked items |
+| Demo Arena (optional test tool) | Aiming · Entities · Visibility · Boost · Settings | Synthetic arena for testing the developer visualizations |
+| Your own private dev build on `localhost` | Aiming · Entities · Visibility · Boost · Settings | Developer overlay fed by your build's authorized dev API ([docs/DEV-API.md](docs/DEV-API.md)) |
 
-## Install on macOS (Google Chrome)
+**On survev.io the Aiming, Entities and Visibility modules do not exist.** The developer adapter and overlay
+canvas are never loaded there (enforced in `src/adapters/host-policy.js` and `src/content/main.js`), so nothing
+reveals hidden players, aims, or reads match data. The extension never modifies network traffic.
 
-1. **Unzip.** Double-click `survev-control-center-1.0.0.zip` in Finder. You get a folder named
-   `survev-control-center` containing `manifest.json`. Move it somewhere permanent (e.g. `~/Documents/`) —
-   Chrome loads the extension straight from that folder, so don't delete it afterwards.
-2. In Chrome, type **`chrome://extensions`** in the address bar and press Return.
-3. Switch on **Developer mode** (toggle in the top-right corner).
-4. Click **Load unpacked** (top-left), choose the **`survev-control-center`** folder (the one that contains
-   `manifest.json`), and press **Select**.
-5. Click the puzzle-piece icon in the Chrome toolbar and **pin** “SURVEV.IO | CONTROL CENTER”.
-6. Click the new toolbar icon → **Open Demo Arena**. Done — everything works immediately, no server needed.
+## Install on macOS (first time)
 
-Updating later: replace the folder contents, then press the circular **reload** arrow on the extension’s card in
-`chrome://extensions`. Requires Chrome 111 or newer.
+1. Download `survev-control-center-1.2.0.zip` and double-click it in Finder. You get a folder named
+   `survev-control-center` (it contains `manifest.json`). Move it somewhere permanent, e.g. `Documents`.
+2. In Chrome open **`chrome://extensions`**.
+3. Turn on **Developer mode** (top-right).
+4. Click **Load unpacked** and choose the `survev-control-center` folder.
+5. Pin it: puzzle-piece icon → pin **SURVEV.IO | CONTROL CENTER**.
+6. Open **https://survev.io** — the dashboard appears on the left of the page. (Or click the toolbar icon → **Open Survev.io**.)
 
-## Try it in 60 seconds
+## Update from an earlier version (1.0.0 / 1.1.0)
 
-In the **Demo Arena** (opened from the popup):
+1. Unzip the new ZIP.
+2. Replace the **contents** of your existing `survev-control-center` folder with the new files
+   (keep the same folder location), **or** remove the old card in `chrome://extensions` and *Load unpacked* the new folder.
+3. In `chrome://extensions`, press the circular **reload** arrow on the extension's card.
+4. Reload any open survev.io tab (⌘R).
 
-| Do this | You should see |
-|---|---|
-| Move the mouse | FOV circle follows the cursor; candidate lines and scores to nearby players |
-| Hold **Left Shift** | Aim-lock test engages: `LOCKED` bracket, lead marker, trajectory, smoothed aim angle |
-| Hold Shift + click / **Space** | Test shots; **Accuracy diagnostics** (Aiming tab) fills in live |
-| Pick **Strafe Test** (top bar) | Constant-speed targets — perfect for tuning prediction and smoothing |
-| **Visibility** tab → turn on *Collision debugging* | Hitboxes, contact normals, bullet impacts |
-| Walk behind a wall | Hidden players get silhouettes; the table lists wall thickness per player |
-| ● button (bottom of panel) | Record → ▶ replay → save / load as JSON |
+Settings are kept when you replace files in the same folder and reload. Removing the extension deletes its settings.
 
-### The four tabs
-- **Aiming** — FOV circle, smoothing + turn-rate, target priority (crosshair / distance / health / threat),
-  visibility check (sight / shot / both), projectile **lead prediction** with ghost projectile, trajectory +
-  spread cone, hit probability, accuracy and lead-error diagnostics, aim-error sparkline.
-- **Entities** — bounding boxes (corners / full / filled), names, health bars, distance, weapon, team colours
-  (by relation or per team), loot markers with rarity filter, off-screen indicators, connector lines.
-- **Visibility** — line-of-sight polygon and rays, wall-occlusion diagnostics (blocker point, thickness,
-  per-player visibility %), silhouettes with transparency / outline / glow, obstacle transparency, collision
-  debugging.
-- **Settings** — master ON/OFF, keyboard shortcuts, theme (accent, radius, opacity, density, motion),
-  saved configurations (save / load / import / export), reset to defaults, developer-session status + token.
+## Using it on survev.io
 
-### Shortcuts
-Inside the Demo Arena and on connected dev pages: **⌥M** master · **⌥D** show/hide dashboard · **⌥P** pause ·
-**⌥R** record (all re-bindable in Settings). Browser-level: **⌥⇧S** master, **⌥⇧D** dashboard — change at
-`chrome://extensions/shortcuts`. Double-click the panel header (or press **–**) to minimize to a pill; drag to move.
+- **Move**: drag the header. **Minimize**: the **–** button (or double-click the header) → small pill; click the pill to expand.
+- **Hide / show**: **⌥D** (Option-D). Browser-wide: **⌥⇧D**. Master switch: **⌥⇧S**.
+- **Gameplay input is never captured**: clicks, wheel and typing inside the panel don't reach the game, and after
+  you click a panel button the focus goes straight back so WASD keeps working. When minimized only the small pill
+  is clickable; when hidden nothing is.
 
-## Use it with your own game (private dev sessions)
+### Boost (Performance)
+- **Live FPS, average, 1% low, frame-time graph, stutters, long frames, display refresh, resolution & DPR.**
+  Measured from the browser's real frame cadence on the survev.io tab (`requestAnimationFrame` timestamps + the
+  Long Animation Frames API). Nothing is estimated from game data; the Demo Arena is labelled as *not* survev.io.
+- **Presets** (MAX FPS / BALANCED / QUALITY) change only the game's own settings checkboxes, by clicking them like
+  you would, plus the dashboard's own weight.
+- **Auto optimize** (off by default; target 30/60/120/144): steps down one preset only after 7 of 10 seconds are
+  below 90% of the target, waits 30 s between changes, measures whether it helped, never steps back up by itself,
+  never reloads the page, and stops when changes don't help. Every action is logged with its reason and effect.
+- **Before / after benchmark**: equal 10/15/30 s windows; reports a change only if it is statistically significant
+  (Welch's t-test, p < 0.05) **and** ≥ 3%. Otherwise it says "No significant difference".
+- **Network**: online/offline events and the browser's connection estimate. Game ping and WebSocket state are shown
+  as "not exposed" on survev.io — the extension does not invent or intercept them.
 
-1. Copy `dev-api-example/scc-dev-api.js` into your game’s **development build** and call `api.tick()` from your
-   render loop (see `dev-api-example/main.js`). Full protocol: [`docs/DEV-API.md`](docs/DEV-API.md).
-2. Serve the build from `localhost` (or `127.0.0.1`, `*.localhost`, `*.local`).
-3. Make sure the token in your page matches **Settings → Developer authorization → Session token**
-   (default for the example: `scc-dev-token` — change it for real use).
-4. Open the page. The overlay attaches by itself once the handshake succeeds; or press **Attach to tab** in the popup.
+### What is verified vs. what needs testing on your Mac
 
-Try the whole flow with the bundled example page:
+| Change | Status | Why |
+|---|---|---|
+| Lightweight dashboard (no blur/shadows/animations over the game) | **Verified** | Our own UI; removing backdrop blur over a moving canvas removes per-frame GPU work |
+| Overlay canvas hidden when idle | **Verified** | Our own rendering (dev pages / demo only — no overlay on survev.io) |
+| High-resolution textures **off** | **Requires testing** | Real GPU/memory effect, size depends on your GPU. The game applies it only by **reloading the page** (you'll be asked first; do it between matches). It has **no effect** on screens under 1366×768 device px, Canvas2D rendering or GPUs with max texture size < 4096 — the Boost tab tells you which applies |
+| Screen shake **off** | Comfort only | Camera offset; no rendering cost expected. Applies from the next match |
+| Interpolation, Local rotation | **Never changed by presets** | No rendering cost; turning interpolation off makes movement choppier |
+| Environment fixes (hardware acceleration, Energy Saver 30 FPS cap) | Detected and explained | Usually the biggest real-world wins; you change them in Chrome settings |
 
-```bash
-cd ~/Documents/survev-control-center
-python3 -m http.server 8080 --bind 127.0.0.1
-# then open  http://localhost:8080/dev-api-example/
-```
-(No Python? `ruby -run -e httpd . -p 8080` works on macOS too.)
+Use **Measure BEFORE → change → Measure AFTER** (in a similar game situation) to see what actually helps on your machine.
+The Game settings card then shows the measured result next to that setting.
 
-### What your game has to provide
-Player/camera/obstacle/weapon data listed in [`docs/DEV-API.md`](docs/DEV-API.md#what-you-need-to-expose-from-your-game).
-The extension does not read any game's internals; it only consumes what your build chooses to publish. Note that
-rotated obstacles and per-pixel map geometry are not supported yet (axis-aligned rectangles and circles only).
+### Pass
+- Reads **level**, **XP / target**, **daily quests** (progress, XP reward, refresh timer) from the game's own pass panel
+  (`#pass-progress-*`, `#pass-quest-0/1`). Log in on survev.io for real values; logged out, the game shows placeholders and
+  the tab says so.
+- Records level-ups, XP gained (after the game's XP animation settles) and quest completions — on this device only.
+- **Auto Claim** (off by default): when the game shows its *"You got a new item!"* window (`#modal-item-confirm`), the
+  extension presses the game's own **Confirm** button (or **Confirm all**, `[data-confirm-all="true"]`, if you choose).
+  That window only appears for items the server has already added to your account; confirming just acknowledges them,
+  exactly like clicking it yourself. Every confirmation is listed in **Claim history**.
+- Never edits XP, never calls game APIs, never unlocks anything.
 
-## Project layout
+## Testing done for this release
 
-```
-manifest.json            MV3 manifest (popup, service worker, localhost-only content script)
-src/background/          service worker: browser shortcuts + OFF badge
-src/popup/               toolbar popup (embedded dashboard + quick actions)
-src/demo/                Demo Arena page
-src/content/             in-page overlay for authorized dev sessions (closed shadow DOM)
-src/app/app.js           frame loop, input, record/replay, analysis wiring
-src/engine/              aiming (target selection, lead, smoothing), visibility/collision, diagnostics
-src/sim/                 deterministic synthetic world, demo source, recorder / replay player
-src/render/              canvas renderer + layers (world, entities, visibility, aiming)
-src/adapters/            dev API adapter + host policy
-src/core/                state (chrome.storage sync), schema sanitizer, math, keys, defaults
-src/ui/                  dashboard, controls, tab definitions, CSS
-dev-api-example/         page-side library + runnable example "game"
-tests/                   engine.test.mjs (node) · e2e.cjs (Playwright + real Chromium)
-```
+| Suite | Target | Result |
+|---|---|---|
+| `npm test` (35 unit tests) | stats & t-test, settings integration, pass parsing, host policy, engine | pass |
+| `node tests/e2e-live.cjs --real` | **the real https://survev.io** in Chromium with the extension loaded | pass — dashboard loads, only Boost/Pass/Settings, no dev canvas, real FPS measured, all four game settings + all pass elements detected, logged-out state recognised |
+| `node tests/e2e-live.cjs` | survev.io URL served from `tests/fixtures/survev-fixture.html` (reproduces the site's markup and the client's settings/pass/unlock-window behaviour) | pass — presets via game checkboxes, reload consent, restore, before/after benchmark, input isolation, XP/level/quest history, auto-claim one-by-one and confirm-all |
+| `node tests/e2e.cjs` | Demo Arena, popup, private dev page | pass |
+
+Not testable from the cloud test machine: a logged-in account (real XP values, a real unlock window) and a real match.
+Those code paths were exercised against the fixture, which mirrors the client code described in `docs/PERFORMANCE.md`.
+
+## Developer features (unchanged)
+Demo Arena, replays and the private dev API are documented in [docs/DEV-API.md](docs/DEV-API.md). Open the Demo Arena
+from the toolbar popup. Its Boost numbers measure the simulator page, not survev.io.
 
 ## Development
-
 ```bash
-npm test                  # 22 pure-logic tests, no browser needed
-node tests/e2e.cjs        # loads the unpacked extension in Chromium (needs Playwright), takes screenshots
-bash scripts/package.sh   # → dist/survev-control-center-<version>.zip
+npm test
+node tests/e2e-live.cjs            # fixture
+node tests/e2e-live.cjs out --real # real survev.io (needs network access to survev.io)
+node tests/e2e.cjs                 # demo + dev page
+bash scripts/package.sh            # -> dist/survev-control-center-<version>.zip
 ```
 
 ## Privacy
-No analytics, no network requests, no remote code. Settings live in `chrome.storage.local` on your machine.
-The session token is stored there too and is excluded from saved-configuration exports.
+No analytics, no remote code, no requests of its own on survev.io. Settings, benchmarks and pass history live in
+`chrome.storage.local` on your Mac.

@@ -8,10 +8,16 @@ import { computeVisibility, losFor, visibilityPolygon, getObsLists } from '../sr
 import { sanitizeSnapshot } from '../src/core/schema.js';
 import { World } from '../src/sim/world.js';
 import { Recorder, ReplaySource } from '../src/sim/replay.js';
-import { evaluateLocation, isPrivateHost } from '../src/adapters/host-policy.js';
+import { evaluateLocation, isPrivateHost, classifyLocation } from '../src/adapters/host-policy.js';
+import { parseIntLoose } from '../src/pass/pass-manager.js';
 import { DEFAULT_CFG, WEAPONS } from '../src/core/defaults.js';
 import { mergeDefaults } from '../src/core/state.js';
 import { AimDiagnostics } from '../src/engine/diagnostics.js';
+import { summarize, welch, tTwoSidedP, compareRuns, snapRefresh, rateRendering } from '../src/perf/stats.js';
+import { GameSettings } from '../src/perf/game-settings.js';
+import { NetMonitor } from '../src/perf/net-monitor.js';
+import { PRESETS } from '../src/perf/presets.js';
+import { sanitizeNet } from '../src/core/schema.js';
 
 let passed = 0;
 const test = (name, fn) => {
@@ -236,6 +242,18 @@ test('host policy: only loopback/private hosts, never public sites', () => {
   assert.equal(evaluateLocation({ protocol: 'http:', hostname: 'localhost' }).ok, true);
   assert.equal(evaluateLocation({ protocol: 'file:', hostname: '' }).ok, false);
 });
+test('classifyLocation: survev.io is live-only, dev adapter stays private-only', () => {
+  assert.equal(classifyLocation({ protocol: 'https:', hostname: 'survev.io' }), 'live');
+  assert.equal(evaluateLocation({ protocol: 'https:', hostname: 'survev.io' }).ok, false);
+  assert.equal(classifyLocation({ protocol: 'http:', hostname: 'localhost' }), 'private');
+  assert.equal(classifyLocation({ protocol: 'https:', hostname: 'example.com' }), 'none');
+  assert.equal(classifyLocation({ protocol: 'https:', hostname: 'evil-survev.io' }), 'none');
+});
+test('parseIntLoose reads game text', () => {
+  assert.equal(parseIntLoose('1,250 XP'), 1250);
+  assert.equal(parseIntLoose(' 12 '), 12);
+  assert.equal(parseIntLoose(''), null);
+});
 test('mergeDefaults drops junk and fixes types', () => {
   const m = mergeDefaults(DEFAULT_CFG, { aiming: { fovRadius: 'big', smoothing: 20, bogus: 1 }, bogus: {} });
   assert.equal(m.aiming.fovRadius, DEFAULT_CFG.aiming.fovRadius);
@@ -255,6 +273,91 @@ test('AimDiagnostics counts shots/hits and resolves lead error', () => {
   near(s.accuracy, 1);
   near(s.leadErr, 1, 1e-6); // 10 units = 1 m
   assert.equal(s.locks, 1);
+});
+
+console.log('performance');
+test('summarize: steady 60 Hz', () => {
+  const s = summarize(new Float32Array(600).fill(1000 / 60), 60);
+  near(s.avgFps, 60, 1e-3);
+  near(s.low1Fps, 60, 1e-3);
+  assert.equal(s.stutters, 0);
+  near(s.onTimePct, 1);
+  assert.ok(s.stdev < 1e-3);
+});
+test('summarize: 1% low and stutters reflect hitches', () => {
+  const ft = new Float32Array(1000).fill(16.67);
+  for (let i = 0; i < 10; i++) ft[i * 100] = 100; // ten 100 ms hitches
+  const s = summarize(ft, 60);
+  near(s.low1Fps, 10, 1e-6);
+  assert.equal(s.stutters, 10);
+  assert.ok(s.avgFps < 60 && s.avgFps > 50);
+  assert.ok(s.jitter > 1);
+});
+test('snapRefresh snaps to common rates', () => {
+  assert.equal(snapRefresh(59.4), 60);
+  assert.equal(snapRefresh(143), 144);
+  assert.equal(snapRefresh(30.6), 30);
+  assert.equal(snapRefresh(87), 90);
+});
+test('t-distribution p-values are correct', () => {
+  near(tTwoSidedP(0, 10), 1, 1e-9);
+  near(tTwoSidedP(2.228, 10), 0.05, 1e-3); // classic table value
+  near(tTwoSidedP(1.96, 1e6), 0.05, 1e-3);
+});
+test('welch: identical vs clearly different samples', () => {
+  const a = [60, 59, 61, 60, 60, 59, 61, 60, 60, 61];
+  assert.ok(welch(a, a.slice()).p > 0.9);
+  const b = a.map((v) => v + 10);
+  assert.ok(welch(a, b).p < 0.001);
+});
+test('compareRuns claims improvement only when significant and >= 3%', () => {
+  const mk = (fps, noise) => ({ avgFps: fps, low1Fps: fps * 0.8, stdev: 2, jitter: 1, stuttersPerMin: 1, perSecond: Array.from({ length: 15 }, (_, i) => fps + ((i % 3) - 1) * noise) });
+  assert.equal(compareRuns(mk(50, 1), mk(60, 1)).verdict, 'improved');
+  assert.equal(compareRuns(mk(60, 1), mk(50, 1)).verdict, 'worse');
+  assert.equal(compareRuns(mk(60, 1), mk(60.5, 1)).verdict, 'no-change'); // significant-ish but < 3%
+  assert.equal(compareRuns(mk(50, 15), mk(53, 15)).verdict, 'no-change'); // noisy
+  assert.equal(compareRuns({ ...mk(50, 1), perSecond: [50] }, mk(60, 1)).verdict, 'insufficient');
+});
+test('rateRendering is bounded and ordered', () => {
+  const good = rateRendering(summarize(new Float32Array(300).fill(16.67), 60), 60);
+  const bad = rateRendering(summarize(new Float32Array(300).fill(50), 60), 60);
+  assert.ok(good.score > bad.score && good.score <= 100 && bad.score >= 0);
+});
+test('GameSettings uses the checkbox like a user and respects reload / missing controls', () => {
+  // Fake DOM that mirrors the client: click() toggles and fires the game's change handler.
+  const log = [];
+  const box = (id, checked) => ({ id, type: 'checkbox', checked, disabled: false, click() { this.checked = !this.checked; log.push(`${id}=${this.checked}`); } });
+  const els = { highResTex: box('highResTex', true), screenShake: box('screenShake', true), interpolation: box('interpolation', true) };
+  const gs = new GameSettings({ getElementById: (id) => els[id] || null });
+  const r = gs.read();
+  assert.equal(r.localRotation.present, false);
+  assert.equal(gs.set('screenShake', false), 'changed');
+  assert.equal(gs.set('screenShake', false), 'unchanged');
+  assert.equal(gs.set('highResTex', false), 'needs-reload');
+  assert.equal(els.highResTex.checked, true, 'reload-type setting must not change without consent');
+  assert.equal(gs.set('highResTex', false, { allowReload: true }), 'changed');
+  assert.equal(gs.set('localRotation', true), 'missing');
+  assert.deepEqual(log, ['screenShake=false', 'highResTex=false']);
+});
+test('presets never touch interpolation or localRotation', () => {
+  for (const p of Object.values(PRESETS)) {
+    assert.ok(!('interpolation' in p.game) && !('localRotation' in p.game), p.id);
+  }
+});
+test('NetMonitor only probes same-origin endpoints and only when allowed', () => {
+  const n = new NetMonitor({ origin: 'http://localhost:3000', allowProbe: true });
+  assert.equal(n.resolveEndpoint('/api/health'), 'http://localhost:3000/api/health');
+  assert.equal(n.resolveEndpoint('https://example.com/ping'), null);
+  assert.equal(n.resolveEndpoint('//evil.test/x'), null);
+  assert.equal(new NetMonitor({ origin: 'chrome-extension://abc', allowProbe: false }).resolveEndpoint('/x'), null);
+  const st = n.stats();
+  assert.equal(st.probe, null);
+  assert.equal(st.game, null); // never invented
+});
+test('sanitizeNet keeps only game-reported, valid values', () => {
+  assert.equal(sanitizeNet(null), null);
+  assert.equal(sanitizeNet({ rttMs: -5, wsState: 'weird' }), null);
+  assert.deepEqual(sanitizeNet({ rttMs: 42.5, wsState: 'open', disconnects: 1.2 }), { rttMs: 42.5, wsState: 'open', disconnects: 1, reconnects: null, serverTickMs: null });
 });
 
 console.log(`\n${passed} tests passed${process.exitCode ? ' (with failures)' : ''}`);

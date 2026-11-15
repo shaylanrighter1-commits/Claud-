@@ -50,7 +50,7 @@ const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
   await demo.mouse.move(900, 380);
   await sleep(400);
   await demo.screenshot({ path: path.join(shots, '01-demo-aiming.png') });
-  check('dashboard mounted with 4+ tabs', (await demo.locator('.scc-tab').count()) === 4);
+  check('dashboard mounted with 5 tabs', (await demo.locator('.scc-tab').count()) === 5);
   check('canvas has pixels', await demo.evaluate(() => { const c = document.getElementById('stage'); return c.width > 0 && c.getContext('2d').getImageData(c.width / 2, c.height / 2, 1, 1).data[3] > 0; }));
 
   // hold lock key and verify diagnostics move
@@ -63,7 +63,7 @@ const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
   await demo.keyboard.up('ShiftLeft');
   check('shots fired while firing', st.shots > 3, JSON.stringify({ shots: st.shots, hits: st.hits, misses: st.misses }));
 
-  for (const [i, id] of ['entities', 'visibility', 'settings'].entries()) {
+  for (const [i, id] of ['entities', 'visibility', 'perf', 'settings'].entries()) {
     await demo.click(`#scc-tab-${id}`);
     await sleep(500);
     await demo.screenshot({ path: path.join(shots, `0${3 + i}-demo-${id}.png`) });
@@ -134,18 +134,40 @@ const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
     const inp = document.querySelector('.scc-inline > .scc-input[type=text]');
     inp.value = 'QA setup';
   });
-  await demo.click('.scc-inline > .scc-btn.primary');
+  await demo.click('.scc-inline:has(> .scc-input[type=text]) > .scc-btn.primary');
   await sleep(400);
   check('profile saved', await demo.evaluate(() => !!window.__scc.state.data.loc.profiles['QA setup']));
 
   // reset to defaults (two-step confirm) keeps saved profiles
   await demo.click('#scc-tab-settings');
   await demo.evaluate(() => { document.querySelector('.scc-body').scrollTop = 99999; });
-  await demo.click('.scc-btn.danger');
-  await demo.click('.scc-btn.danger');
+  await demo.click('.scc-page.on .scc-btn.danger');
+  await demo.click('.scc-page.on .scc-btn.danger');
   await sleep(400);
   check('reset restores defaults', (await demo.evaluate(() => window.__scc.state.data.cfg.aiming.fovRadius)) === 200);
   check('reset keeps saved profiles', await demo.evaluate(() => !!window.__scc.state.data.loc.profiles['QA setup']));
+
+  // ---------------------------------------------------------------- performance boost (demo)
+  await demo.click('#scc-tab-perf');
+  await sleep(2500);
+  const fpsText = await demo.locator('.pf-fps').textContent();
+  check('live FPS measured from real frames', /^\d+$/.test(fpsText) && Number(fpsText) > 5, fpsText);
+  await demo.screenshot({ path: path.join(shots, '12-demo-perf.png') });
+  const benchRes = await demo.evaluate(async () => {
+    const p = window.__scc.perf;
+    await p.runBenchmark('before', 5);
+    await p.runBenchmark('after', 5);
+    return p.comparison();
+  });
+  check('before/after benchmark produces a comparison', !!benchRes && benchRes.rows.length === 5, benchRes && benchRes.verdict);
+  check('A/A comparison does not claim improvement', benchRes && benchRes.verdict !== 'improved', benchRes && `${benchRes.verdict} p=${benchRes.p.toFixed(2)}`);
+  await demo.locator('.pf-preset').first().locator('.scc-btn').click();
+  await sleep(300);
+  check('MAX FPS preset turns on lightweight dashboard', await demo.evaluate(() => window.__scc.state.data.cfg.perf.liteUi && document.querySelector('.scc-root.floating').classList.contains('lite')));
+  check('preset result lists game settings as unavailable in demo', /Not available on this page/.test(await demo.locator('.pf-result').textContent()));
+  await demo.evaluate(() => window.__scc.perf.restoreOriginal());
+  await sleep(200);
+  check('restore original undoes preset', await demo.evaluate(() => window.__scc.state.data.cfg.perf.liteUi === false && window.__scc.state.data.loc.perf.original === null));
 
   // ---------------------------------------------------------------- popup
   const pop = await ctx.newPage();
@@ -179,6 +201,77 @@ const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
   await sleep(600);
   await dev.screenshot({ path: path.join(shots, '11-dev-overlay.png') });
 
+  // ---------------------------------------------------------------- game settings integration (example mirrors the client)
+  await dev.evaluate(() => localStorage.removeItem('example_config'));
+  await dev.reload();
+  await sleep(2500);
+  await dev.click('#scc-tab-perf');
+  await sleep(800);
+  check('game settings controls detected', /detected on this page/.test(await dev.locator('.pf-detect').textContent()));
+  await dev.screenshot({ path: path.join(shots, '13-dev-perf.png') });
+  await dev.locator('.pf-preset').first().locator('.scc-btn').click(); // MAX FPS
+  await sleep(300);
+  const afterApply = await dev.evaluate(() => ({ shake: document.getElementById('screenShake').checked, hi: document.getElementById('highResTex').checked }));
+  check('MAX FPS switched screen shake off via the game control', afterApply.shake === false);
+  check('high-res textures NOT changed without reload consent', afterApply.hi === true);
+  await Promise.all([dev.waitForEvent('load'), dev.getByText('Apply & reload now').click()]);
+  await sleep(2500);
+  check('after consented reload, high-res textures are off (game persisted it)', await dev.evaluate(() => document.getElementById('highResTex').checked === false));
+  await dev.click('#scc-tab-perf');
+  await sleep(500);
+  await dev.evaluate(() => { const b = [...document.getElementById('scc-overlay-host').shadowRoot.querySelectorAll('.scc-btn')].find((x) => /Restore original settings/.test(x.textContent)); b.click(); });
+  await sleep(300);
+  check('restore original re-enables screen shake', await dev.evaluate(() => document.getElementById('screenShake').checked === true));
+
+  // network probe against an authorized same-origin endpoint
+  await sw.evaluate(async () => {
+    const c = (await chrome.storage.local.get('scc.config'))['scc.config'];
+    c.perf.net = { probe: true, endpoint: '/dev-api-example/index.html', intervalSec: 2 };
+    await chrome.storage.local.set({ 'scc.config': c });
+  });
+  await sleep(5500);
+  const probeTxt = await dev.evaluate(() => [...document.getElementById('scc-overlay-host').shadowRoot.querySelectorAll('.scc-stat')].map((e) => e.textContent).join('|'));
+  check('latency probe reports real RTT samples', /\d+msavg · jitter/.test(probeTxt), probeTxt.split('|').filter((t) => /Probe|avg/.test(t)).join(' '));
+  check('game ping not invented when page does not expose it', /—not exposed by page/.test(probeTxt));
+
+  await dev.close(); // one game tab at a time for the auto-optimizer test
+
+  // auto optimizer under a sustained (synthetic, test-only) heavy load
+  await sw.evaluate(async () => {
+    const c = (await chrome.storage.local.get('scc.config'))['scc.config'];
+    c.perf.net.probe = false;
+    c.perf.autoOptimize = true;
+    c.perf.targetFps = 60;
+    c.perf.preset = '';
+    await chrome.storage.local.set({ 'scc.config': c });
+    const l = (await chrome.storage.local.get('scc.local'))['scc.local'];
+    l.perf.autoLog = [];
+    await chrome.storage.local.set({ 'scc.local': l });
+  });
+  const heavy = await ctx.newPage();
+  hook(heavy, 'heavy');
+  await heavy.goto(`http://localhost:${port}/dev-api-example/index.html?load=35`);
+  await heavy.bringToFront();
+  const hiBefore = await heavy.evaluate(() => document.getElementById('highResTex').checked);
+  await sleep(16000);
+  let log = await sw.evaluate(async () => (await chrome.storage.local.get('scc.local'))['scc.local'].perf.autoLog);
+  check('auto optimizer stepped down after sustained low FPS', log.length >= 1 && log[0].to === 'balanced', log[0] && log[0].reason);
+  await sleep(14000);
+  log = await sw.evaluate(async () => (await chrome.storage.local.get('scc.local'))['scc.local'].perf.autoLog);
+  check('auto optimizer measured the effect honestly', log[0] && log[0].after && /No measurable|%/.test(log[0].effect), log[0] && log[0].effect);
+  await heavy.click('#scc-tab-perf');
+  await heavy.evaluate(() => { const r = document.getElementById('scc-overlay-host').shadowRoot; r.querySelector('.scc-body').scrollTop = 1400; });
+  await sleep(600);
+  await heavy.screenshot({ path: path.join(shots, '14-auto-optimizer.png') });
+  check('auto optimizer did not touch reload-type settings', (await heavy.evaluate(() => document.getElementById('highResTex').checked)) === hiBefore);
+  check('auto log explains reason + changes', !!(log[0] && log[0].reason && Array.isArray(log[0].changes)), log[0] && log[0].changes.join(' · '));
+  await sw.evaluate(async () => {
+    const c = (await chrome.storage.local.get('scc.config'))['scc.config'];
+    c.perf.autoOptimize = false;
+    await chrome.storage.local.set({ 'scc.config': c });
+  });
+  await heavy.close();
+
   // wrong token must be rejected
   const bad = await ctx.newPage();
   hook(bad, 'bad');
@@ -190,7 +283,15 @@ const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
   });
   await bad.goto(`http://localhost:${port}/dev-api-example/index.html`);
   await sleep(3500);
-  check('wrong token does NOT attach', !(await bad.evaluate(() => !!document.getElementById('scc-overlay-host'))));
+  const badState = await bad.evaluate(() => {
+    const host = document.getElementById('scc-overlay-host');
+    const cv = host && host.shadowRoot.querySelector('.scc-canvas');
+    return { host: !!host, canvasShown: !!cv && cv.style.display !== 'none' };
+  });
+  check('wrong token: adapter rejected, overlay draws nothing', !badState.canvasShown, JSON.stringify(badState));
+  await bad.click('#scc-tab-settings');
+  await sleep(1300);
+  check('wrong token: Settings shows Rejected', /Rejected/.test(await bad.locator('.scc-dev-label').textContent()));
 
   // public host must never attach (content script isn't even injected; verify via 127.0.0.2? loopback allowed) -> use unrelated origin
   const pub = await ctx.newPage();

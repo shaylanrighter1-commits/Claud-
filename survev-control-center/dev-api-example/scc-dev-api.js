@@ -9,6 +9,7 @@
 //     sessionId: 'dev-session-1',
 //     getMap:      () => ({ world:{w,h}, meta:{unitsPerMeter}, obstacles:[...] }),   // static geometry, sent once
 //     getSnapshot: () => ({ camera, self, players, loot, bullets, events, ... }),     // called once per tick()
+//     getNet: () => ({ rttMs, wsState, disconnects }),   // OPTIONAL: values your client already measures
 //   });
 //   api.start();
 //   // inside your render loop:
@@ -18,9 +19,9 @@
 // server-issued token. The extension refuses public hosts regardless of what the page sends.
 
 export class SccDevApi {
-  constructor({ token, env = 'development', sessionId = 'dev', appName = 'my-game-dev', getMap, getSnapshot }) {
+  constructor({ token, env = 'development', sessionId = 'dev', appName = 'my-game-dev', getMap, getSnapshot, getNet }) {
     if (!token) throw new Error('SccDevApi: token is required');
-    this.cfg = { token, env, sessionId, appName, getMap, getSnapshot };
+    this.cfg = { token, env, sessionId, appName, getMap, getSnapshot, getNet };
     this.authorized = false;
     this._onMsg = this._onMsg.bind(this);
   }
@@ -63,6 +64,9 @@ export class SccDevApi {
   /** Call once per rendered frame (or at least ~30 Hz). Cheap no-op until the extension is authorized. */
   tick() {
     if (!this.authorized) return;
-    this._post({ type: 'snapshot', frame: this.cfg.getSnapshot() });
+    const frame = this.cfg.getSnapshot();
+    // Network values are only ever what your client itself measured (e.g. its own ping and WebSocket state).
+    if (this.cfg.getNet) frame.net = this.cfg.getNet();
+    this._post({ type: 'snapshot', frame });
   }
 }

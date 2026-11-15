@@ -1,0 +1,123 @@
+<!doctype html>
+<!--
+  TEST FIXTURE — NOT survev.io.
+  Served by tests/e2e.cjs at https://survev.io/ (request interception) because the real site may be unreachable
+  from CI. It reproduces only the markup and behaviour the extension relies on, as found in the client bundle:
+    * .modal-settings-item > input:checkbox  change -> config.set(id); highResTex -> location.reload()
+    * #cvs game canvas rendering every frame
+    * #pass-progress-level / -xp-current / -xp-target, #pass-locked, #pass-quest-0/1 with their child classes
+    * #modal-item-confirm with `.close` buttons; hide(e) -> confirmAllItems() if e.target has data-confirm-all,
+      else confirmNextItem() (shows the next pending item after 200 ms)
+  It also counts "game" input events on window so tests can verify the dashboard doesn't leak input.
+-->
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <title>survev.io (test fixture)</title>
+    <style>
+      html, body { margin: 0; height: 100%; background: #1a2a14; color: #ddd; font: 13px sans-serif; overflow: hidden; }
+      #cvs { position: fixed; inset: 0; width: 100%; height: 100%; display: block; }
+      #menu { position: fixed; left: 20px; top: 20px; width: 300px; padding: 12px; background: rgba(0,0,0,.6); border-radius: 8px; }
+      .modal-settings-item { margin: 4px 0; }
+      #pass-block { margin-top: 10px; }
+      #pass-locked { display: none; }
+      #modal-item-confirm { display: none; position: fixed; left: 40%; top: 40%; padding: 20px; background: #333; border-radius: 8px; }
+      .pass-quest { margin: 6px 0; padding: 6px; background: rgba(255,255,255,.06); }
+    </style>
+  </head>
+  <body>
+    <canvas id="cvs"></canvas>
+    <div id="menu">
+      <div class="modal-settings-item"><input type="checkbox" id="highResTex" /><span class="modal-settings-text">High Resolution Textures</span></div>
+      <div class="modal-settings-item"><input type="checkbox" id="screenShake" /><span class="modal-settings-text">Screen Shake</span></div>
+      <div class="modal-settings-item"><input type="checkbox" id="interpolation" /><span class="modal-settings-text">Interpolation</span></div>
+      <div class="modal-settings-item"><input type="checkbox" id="localRotation" /><span class="modal-settings-text">Local Rotation</span></div>
+      <div id="pass-block">
+        <div id="pass-locked">Log in to track your pass</div>
+        <div>Level <span id="pass-progress-level">1</span> · <span id="pass-progress-xp-current">0</span>/<span id="pass-progress-xp-target">100</span> XP</div>
+        <div id="pass-quest-0" class="pass-quest">
+          <div class="pass-quest-desc">Deal damage with shotguns</div>
+          <span class="pass-quest-counter-current">0</span>/<span class="pass-quest-counter-target">500</span>
+          <span class="pass-quest-xp">+50</span><span class="pass-quest-timer"></span>
+        </div>
+        <div id="pass-quest-1" class="pass-quest">
+          <div class="pass-quest-desc">Get 3 kills</div>
+          <span class="pass-quest-counter-current">2</span>/<span class="pass-quest-counter-target">3</span>
+          <span class="pass-quest-xp">+100</span><span class="pass-quest-timer">5h 12m</span>
+        </div>
+      </div>
+    </div>
+    <div id="modal-item-confirm">
+      <div>New item unlocked: <b id="modal-item-confirm-name"></b></div>
+      <div class="close" id="btn-confirm-one">Confirm</div>
+      <div class="close" data-confirm-all="true">Confirm all</div>
+    </div>
+    <script>
+      // ---- settings (same wiring as the client) ----
+      const cfg = Object.assign({ highResTex: true, screenShake: true, interpolation: true, localRotation: true }, JSON.parse(localStorage.getItem('fixture_cfg') || '{}'));
+      document.querySelectorAll('.modal-settings-item > input[type=checkbox]').forEach((el) => {
+        el.checked = !!cfg[el.id];
+        el.addEventListener('change', () => {
+          cfg[el.id] = el.checked;
+          localStorage.setItem('fixture_cfg', JSON.stringify(cfg));
+          if (el.id === 'highResTex') location.reload();
+        });
+      });
+
+      // ---- game canvas rendering every frame ----
+      const cv = document.getElementById('cvs');
+      const g = cv.getContext('2d');
+      let t = 0;
+      (function frame() {
+        if (cv.width !== innerWidth) { cv.width = innerWidth; cv.height = innerHeight; }
+        t += 0.02;
+        g.fillStyle = '#284018'; g.fillRect(0, 0, cv.width, cv.height);
+        g.fillStyle = '#e8d06a'; g.beginPath(); g.arc(cv.width / 2 + Math.cos(t) * 200, cv.height / 2 + Math.sin(t) * 120, 24, 0, 7); g.fill();
+        requestAnimationFrame(frame);
+      })();
+
+      // ---- "game" input listeners (like the client's input handler on window) ----
+      window.__game = { mousedown: 0, keydown: 0, keys: [] };
+      window.addEventListener('mousedown', () => window.__game.mousedown++);
+      window.addEventListener('keydown', (e) => { window.__game.keydown++; window.__game.keys.push(e.code); });
+
+      // ---- unlock-confirm modal (mirrors pi + confirmNextItem / confirmAllItems) ----
+      const modal = document.getElementById('modal-item-confirm');
+      const nameEl = document.getElementById('modal-item-confirm-name');
+      window.__fixture = { pending: [], acked: [], ackAllCalls: 0 };
+      function showNext() {
+        const it = window.__fixture.pending.shift();
+        if (!it) return;
+        window.__fixture.acked.push(it);
+        setTimeout(() => { nameEl.textContent = it; modal.style.display = 'block'; }, 200);
+      }
+      modal.querySelectorAll('.close').forEach((b) => b.addEventListener('click', (e) => {
+        modal.style.display = 'none';
+        if (e.target.dataset.confirmAll) { window.__fixture.ackAllCalls++; window.__fixture.acked.push(...window.__fixture.pending.splice(0)); return; }
+        showNext();
+      }));
+      window.__fixture.grant = (items) => { window.__fixture.pending.push(...items); if (modal.style.display !== 'block') showNext(); };
+
+      // ---- pass XP update the way the client animates it (lerp toward the server value) ----
+      window.__fixture.addXp = (amount) => {
+        const L = document.getElementById('pass-progress-level');
+        const C = document.getElementById('pass-progress-xp-current');
+        const T = document.getElementById('pass-progress-xp-target');
+        let start = Number(C.textContent), target = start + amount, lvl = Number(L.textContent), tgt = Number(T.textContent);
+        let k = 0;
+        const step = () => {
+          k = Math.min(1, k + 0.08);
+          let v = Math.round(start + (target - start) * k);
+          if (v >= tgt) { L.textContent = String(lvl + 1); C.textContent = String(v - tgt); T.textContent = String(tgt + 50); }
+          else C.textContent = String(v);
+          if (k < 1) setTimeout(step, 30);
+        };
+        step();
+      };
+      window.__fixture.completeQuest = () => { document.querySelector('#pass-quest-1 .pass-quest-counter-current').textContent = '3'; };
+      // extension's developer handshake must never appear here
+      window.__devHello = 0;
+      window.addEventListener('message', (e) => { if (e.data && e.data.source === 'scc-extension') window.__devHello++; });
+    </script>
+  </body>
+</html>

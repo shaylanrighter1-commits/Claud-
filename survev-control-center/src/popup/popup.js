@@ -19,7 +19,7 @@ async function getDevStatus() {
   } catch (_) {
     /* no content script on this tab */
   }
-  return { phase: 'none', reason: 'Open a localhost / private dev page, then press “Attach to tab”.' };
+  return { phase: 'none', reason: 'Open survev.io or a localhost dev page. The dashboard appears on the page itself.' };
 }
 
 async function main() {
@@ -31,22 +31,39 @@ async function main() {
     mode: 'embedded',
     parent: document.getElementById('dash'),
     getDevStatus,
+    tabs: 'popup',
   });
   dash.mount();
 
   const actions = document.getElementById('actions');
   actions.append(
     buttonControl({
-      text: 'Open Demo Arena',
-      icon: 'flask',
+      text: 'Open Survev.io',
+      icon: 'bolt',
       variant: 'primary',
+      onClick: async () => {
+        const tab = await activeTab();
+        if (tab && /^https:\/\/survev\.io\//.test(tab.url || '')) {
+          try {
+            await chrome.tabs.sendMessage(tab.id, { type: 'scc:attach' });
+          } catch (_) {
+            /* page still loading */
+          }
+        } else await chrome.tabs.create({ url: 'https://survev.io/' });
+        window.close();
+      },
+    }),
+    buttonControl({
+      text: 'Demo Arena',
+      icon: 'flask',
+      variant: 'ghost',
       onClick: async () => {
         await chrome.tabs.create({ url: chrome.runtime.getURL('src/demo/demo.html') });
         window.close();
       },
     }),
     buttonControl({
-      text: 'Attach to tab',
+      text: 'Attach',
       icon: 'link',
       variant: 'ghost',
       onClick: async () => {
@@ -58,7 +75,7 @@ async function main() {
             window.close();
           }
         } catch (_) {
-          dash.toast('Works on localhost / private dev pages only');
+          dash.toast('Works on survev.io and localhost dev pages');
         }
       },
     })

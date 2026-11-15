@@ -5,9 +5,9 @@ import { h, Bus } from '../core/util.js';
 import { THEMES } from '../core/defaults.js';
 import { LOGO, icon } from './icons.js';
 import { buildControl } from './controls.js';
-import { ALL_TABS } from './tabs.js';
+import { ALL_TABS, TAB_SETS } from './tabs.js';
 
-const MODE_TEXT = { demo: 'Demo Arena', dev: 'Dev session', replay: 'Replay', popup: 'Control panel' };
+const MODE_TEXT = { demo: 'Demo Arena', dev: 'Dev session', replay: 'Replay', popup: 'Control panel', live: 'Survev.io' };
 
 export class Dashboard {
   /**
@@ -18,18 +18,25 @@ export class Dashboard {
    * @param o.getDevStatus async () => status
    * @param o.actions { reconnect?: fn }
    */
-  constructor({ state, app = null, mode = 'floating', parent, getDevStatus, actions = {} }) {
+  constructor({ state, app = null, perf = null, pass = null, mode = 'floating', parent, getDevStatus, actions = {}, tabs = 'dev', label = null, defaultSide = 'right' }) {
     this.state = state;
     this.app = app;
     this.mode = mode;
     this.parent = parent;
+    this.label = label;
+    this.defaultSide = defaultSide;
+    const ids = Array.isArray(tabs) ? tabs : TAB_SETS[tabs] || TAB_SETS.dev;
+    this.tabs = ALL_TABS.filter((t) => ids.includes(t.id));
     this.disposers = [];
     this.toastTimer = 0;
     this.ctx = {
       state,
       app,
+      perf,
+      pass,
       bus: app ? app.bus : new Bus(),
       disposers: this.disposers,
+      isShown: (el) => !!(el && el.closest('.scc-page.on') && !this.root.classList.contains('min') && !this.root.classList.contains('gone') && !document.hidden),
       watch: (path, fn) => {
         const off = state.watch(path, fn);
         this.disposers.push(off);
@@ -64,14 +71,16 @@ export class Dashboard {
       h('div', { class: 'scc-head-actions' }, this.powerBtn, minBtn));
 
     // ---- tabs
-    const tablist = h('nav', { class: 'scc-tabs', role: 'tablist' });
+    const many = this.tabs.length > 5;
+    const tablist = h('nav', { class: 'scc-tabs' + (this.tabs.length > 4 ? ' many' : '') + (many ? ' six' : ''), role: 'tablist' });
+    tablist.style.setProperty('--tabs', String(this.tabs.length));
     this.indicator = h('span', { class: 'scc-ind' });
     tablist.append(this.indicator);
     this.tabBtns = new Map();
     this.pages = new Map();
     const body = h('main', { class: 'scc-body' });
-    for (const tab of ALL_TABS) {
-      const b = h('button', { class: 'scc-tab', type: 'button', role: 'tab', id: `scc-tab-${tab.id}` }, h('span', { class: 'scc-tab-i', html: icon(tab.icon, 17) }), h('span', { class: 'scc-tab-l', text: tab.label }));
+    for (const tab of this.tabs) {
+      const b = h('button', { class: 'scc-tab', type: 'button', role: 'tab', id: `scc-tab-${tab.id}`, title: tab.title }, h('span', { class: 'scc-tab-i', html: icon(tab.icon, 17) }), h('span', { class: 'scc-tab-l', text: many ? tab.short : tab.label }));
       b.addEventListener('click', () => state.set('loc.ui.tab', tab.id));
       tablist.append(b);
       this.tabBtns.set(tab.id, b);
@@ -93,8 +102,10 @@ export class Dashboard {
     this.float.append(this.panel, this.pill);
     this.root.append(this.float);
     this.parent.append(this.root);
+    if (floating) this.isolateInput();
 
     this.ctx.watch('cfg.theme', () => this.applyTheme());
+    this.ctx.watch('cfg.perf.liteUi', () => this.applyTheme());
     this.ctx.watch('loc.master', () => this.refresh());
     this.ctx.watch('loc.ui', () => this.refresh());
     if (this.app) this.disposers.push(this.app.bus.on('status', () => this.refresh()));
@@ -220,7 +231,7 @@ export class Dashboard {
   refresh() {
     const { state } = this;
     const loc = state.data.loc;
-    const tabId = this.pages.has(loc.ui.tab) ? loc.ui.tab : 'aiming';
+    const tabId = this.pages.has(loc.ui.tab) ? loc.ui.tab : this.tabs[0].id;
     let idx = 0;
     let i = 0;
     for (const [id, b] of this.tabBtns) {
@@ -235,7 +246,7 @@ export class Dashboard {
     this.indicator.style.width = `${100 / this.tabBtns.size}%`;
     this.root.dataset.master = loc.master ? 'on' : 'off';
     const st = this.app ? this.app.getStatus() : null;
-    const label = st ? (st.mode === 'dev' ? MODE_TEXT.dev : MODE_TEXT[st.mode] || st.label) : MODE_TEXT.popup;
+    const label = this.label || (st ? (st.mode === 'dev' ? MODE_TEXT.dev : MODE_TEXT[st.mode] || st.label) : MODE_TEXT.popup);
     this.statusText.textContent = `${label} · ${loc.master ? 'ACTIVE' : 'MASTER OFF'}`;
     const tone = !loc.master ? 'red' : st && st.recording ? 'red' : st && st.mode === 'replay' ? 'amber' : 'green';
     this.statusDot.className = `scc-dot ${tone}`;
@@ -257,6 +268,7 @@ export class Dashboard {
     r.setProperty('--panel-a', String(t.panelOpacity / 100));
     this.root.classList.toggle('compact', !!t.compact);
     this.root.dataset.motion = t.motion ? 'on' : 'off';
+    this.root.classList.toggle('lite', !!this.state.data.cfg.perf.liteUi);
   }
 
   toast(text) {
@@ -266,6 +278,29 @@ export class Dashboard {
     this.toastTimer = setTimeout(() => this.toastEl.classList.remove('show'), 2200);
   }
 
+  /**
+   * Keep the game from seeing interactions with the panel: presses, clicks, wheel and typing inside the panel
+   * do not propagate to page listeners. Releases (mouseup/pointerup) are left alone so the game never gets a
+   * stuck button. After a mouse click, buttons release focus so movement keys go straight back to the game.
+   */
+  isolateInput() {
+    const stop = (e) => e.stopPropagation();
+    for (const ev of ['mousedown', 'pointerdown', 'click', 'dblclick', 'wheel', 'contextmenu', 'touchstart']) {
+      this.root.addEventListener(ev, stop, { passive: ev === 'wheel' || ev === 'touchstart' });
+    }
+    const keys = (e) => {
+      const t = e.composedPath()[0];
+      if (t && (t.tagName === 'INPUT' || t.tagName === 'SELECT' || t.tagName === 'TEXTAREA')) e.stopPropagation();
+    };
+    for (const ev of ['keydown', 'keyup', 'keypress']) this.root.addEventListener(ev, keys);
+    this.root.addEventListener('click', (e) => {
+      if (e.detail === 0) return; // keyboard activation keeps focus for accessibility
+      const t = e.composedPath()[0];
+      const b = t && t.closest && t.closest('button, input[type=range]');
+      if (b) b.blur();
+    });
+  }
+
   // ------------------------------------------------------------------ drag + placement
   place(save, override) {
     const ui = this.state.data.loc.ui;
@@ -273,7 +308,8 @@ export class Dashboard {
     let x = override ? override.x : ui.x;
     let y = override ? override.y : ui.y;
     if (x < 0 || y < 0) {
-      x = Math.max(12, window.innerWidth - w - 20);
+      // First run: pick a side that doesn't cover the host page's most important UI.
+      x = this.defaultSide === 'left' ? 20 : Math.max(12, window.innerWidth - w - 20);
       y = 20;
     }
     x = Math.min(Math.max(8, x), Math.max(8, window.innerWidth - Math.min(w, 120) - 8));
